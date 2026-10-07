@@ -1,4 +1,4 @@
-// NEON RAIN player car: the PATROL hover cruiser (v3, bubble-canopy outrigger design).
+// SKYRUNNER player car: the PATROL hover cruiser (v3, bubble-canopy outrigger design).
 // buildCruiser(THREE) -> { group, lights, setBank(rad), setBoost(0..1), update(t) }
 // Axes: car faces -Z, +Y up, origin at body centre. Length ~8, width ~2.9.
 window.buildCruiser = function (THREE) {

@@ -1,5 +1,5 @@
-// NEON RAIN fx: rain, speed lines, boost streaks, thruster shimmer, hit sparks/spray,
-// crash explosion (fireball, debris, smoke trails), near-miss flash, siren pulse.
+// SKYRUNNER fx: rain, speed lines, boost streaks, thruster shimmer, hit sparks/spray,
+// crash explosion (fireball, debris, smoke trails), near-miss flash, siren pulse, roll ribbons + whoosh, lightning ring + bolt.
 // All pooled. Rain and speed lines run on the GPU (one draw each). No per-frame allocation.
 (function () {
   const NR = window.NR = window.NR || {};
@@ -301,6 +301,138 @@
     return false;
   }
 
+  // ---------- roll: two light ribbons from the outrigger pods + whoosh streaks ----------
+  const RIB_N = 30, RIB_LIFE = 0.34, RIB_POD = [[-1.3, -0.85, -4.0], [1.3, -0.85, -4.0]], RIB_IN = 0.84;
+  const RIB_COL = [[0xf5d69e, 0xdb994d], [0xebede6, 0x7ab3b8]]; // [head, tail] per ribbon: amber left, teal-grey right
+  let rib, ribPos, ribCol, ribH = 0, ribM = 0, ribAcc = 0, ribBoost = 0, rollFxT = -1, rollWas = false, lastRollEvt = -9;
+  const ribC = new Float32Array(RIB_N * 2 * 3), ribE = new Float32Array(RIB_N * 2 * 3), ribAge = new Float32Array(RIB_N), ribK = new Float32Array(RIB_N);
+  const ribRGB = new Float32Array(12);
+  function buildRibbons() {
+    ribPos = new Float32Array(2 * RIB_N * 2 * 3); ribCol = new Float32Array(2 * RIB_N * 2 * 3);
+    const idx = [];
+    for (let r = 0; r < 2; r++) for (let i = 0; i < RIB_N - 1; i++) {
+      const a = (r * RIB_N + i) * 2, b = a + 2; idx.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+    const g = new T.BufferGeometry();
+    const pa = new T.BufferAttribute(ribPos, 3), ca = new T.BufferAttribute(ribCol, 3); pa.setUsage(T.DynamicDrawUsage); ca.setUsage(T.DynamicDrawUsage);
+    g.setAttribute('position', pa); g.setAttribute('color', ca); g.setIndex(idx);
+    rib = new T.Mesh(g, new T.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, fog: false }));
+    rib.frustumCulled = false; rib.renderOrder = 7; rib.visible = false;
+    for (let r = 0; r < 2; r++) for (let e = 0; e < 2; e++) { const h = RIB_COL[r][e], o = r * 6 + e * 3;
+      ribRGB[o] = ((h >> 16) & 255) / 255; ribRGB[o + 1] = ((h >> 8) & 255) / 255; ribRGB[o + 2] = (h & 255) / 255; }
+  }
+  // push one sample per ribbon (pod point + an inner point toward the hull give the ribbon its width and twist)
+  function ribSample(k) {
+    const car = NR.player && NR.player.car && NR.player.car.group;
+    if (car && car.updateMatrixWorld) car.updateMatrixWorld();
+    ribH = (ribH + 1) % RIB_N; if (ribM < RIB_N) ribM++;
+    ribAge[ribH] = 0; ribK[ribH] = k;
+    for (let r = 0; r < 2; r++) {
+      const p = RIB_POD[r], j = (ribH * 2 + r) * 3;
+      if (!carWorld(p[0], p[1], p[2], v0)) return false;
+      carWorld(p[0] * RIB_IN, p[1] + 0.12, p[2], v1);
+      ribC[j] = (v0.x + v1.x) / 2; ribC[j + 1] = (v0.y + v1.y) / 2; ribC[j + 2] = (v0.z + v1.z) / 2;
+      ribE[j] = (v0.x - v1.x) / 2; ribE[j + 1] = (v0.y - v1.y) / 2; ribE[j + 2] = (v0.z - v1.z) / 2;
+    }
+    return true;
+  }
+  function ribUpdate(dt, scroll) {
+    const drift = scroll * 0.12 + 16 * dt; // trail streams back behind the car, not all the way to the camera
+    let live = 0;
+    for (let n = 0; n < RIB_N; n++) {
+      const s = (ribH - n + RIB_N) % RIB_N, ok = n < ribM;
+      if (ok) { ribAge[s] += n === 0 ? 0 : dt; for (let r = 0; r < 2; r++) ribC[(s * 2 + r) * 3 + 2] += n === 0 ? 0 : drift; }
+      const t = ok ? Math.min(1, ribAge[s] / RIB_LIFE) : 1, a0 = ok ? ribK[s] * (1 - t) * (1 - t) * Math.min(1, n / 2 + 0.35) : 0;
+      const a = a0 < 0.12 ? 0 : a0; // dim tails dither into a grey smear on the palette: cut them
+      if (a > 0.003) live++;
+      for (let r = 0; r < 2; r++) {
+        const j = (s * 2 + r) * 3, o = ((r * RIB_N + n) * 2) * 3, w = 1 - t * 0.6, c = r * 6, ct = Math.min(1, t * 2.2);
+        for (let e = 0; e < 2; e++) {
+          const sg = e ? -1 : 1, oo = o + e * 3;
+          ribPos[oo] = ribC[j] + ribE[j] * sg * w; ribPos[oo + 1] = ribC[j + 1] + ribE[j + 1] * sg * w; ribPos[oo + 2] = ribC[j + 2] + ribE[j + 2] * sg * w;
+          const ea = a * (e ? 0.55 : 1); // outer edge brighter: a light blade, not a flat strip
+          for (let q = 0; q < 3; q++) ribCol[oo + q] = (ribRGB[c + q] + (ribRGB[c + 3 + q] - ribRGB[c + q]) * ct) * ea * (1 + ribBoost * 0.4);
+        }
+      }
+    }
+    if (!live) { ribM = 0; rib.visible = false; return; }
+    rib.visible = true; rib.geometry.attributes.position.needsUpdate = true; rib.geometry.attributes.color.needsUpdate = true;
+  }
+  // whoosh: air streaks thrown back and away from the roll direction, swirling around the hull
+  function rollWhoosh(dir, boost) {
+    const pp = playerPos(v2), dx = dir && typeof dir.x === 'number' ? dir.x : 0, dy = dir && typeof dir.y === 'number' ? dir.y : 0;
+    const n = Math.round((boost ? 26 : 18) * quality()), spin = dx ? -Math.sign(dx) : 1;
+    CARRY = 0.2;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 6.283 + rnd(-0.2, 0.2), r = rnd(1.8, 3.4), ca = Math.cos(a), sa = Math.sin(a);
+      const sp = rnd(8, 14) * (boost ? 1.4 : 1);
+      pools.lines.spawn(pp.x + ca * r * 1.2, pp.y + 0.2 + sa * r * 0.8, pp.z + rnd(-4, 2),
+        -dx * 10 - sa * sp * spin, -dy * 8 + ca * sp * spin, rnd(18, 34), rnd(0.22, 0.38), Math.random() < 0.6 ? 0xebede6 : 0x7ab3b8, 0, 0.045, 0, 0, 0, 3);
+    }
+    // soft burst at the pods
+    for (let r = 0; r < 2; r++) if (carWorld(RIB_POD[r][0], RIB_POD[r][1], RIB_POD[r][2], v0))
+      pools.add.spawn(v0.x, v0.y, v0.z, 0, 0, 8, 0.25, 1.2, 3.2, r ? 0xebede6 : 0xf5d69e, r ? 0x38737d : 0x9e612b, 0.8, 2, 0, 0.6);
+    CARRY = 1;
+  }
+  function rollStart(dir, boost) {
+    rollFxT = boost ? 0.35 : 0.45; ribBoost = boost ? 1 : 0;
+    rollWhoosh(dir, boost);
+  }
+
+  // ---------- lightning: target ring on the strike spot, then a jagged bolt ----------
+  const STRIKES = [];
+  function buildStrikes() {
+    const rg = new T.RingGeometry(0.68, 1, 40), dg = new T.RingGeometry(0.18, 0.34, 24);
+    for (let i = 0; i < 4; i++) {
+      const mk = (g, c) => { const m = new T.Mesh(g, new T.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, fog: false }));
+        m.visible = false; m.frustumCulled = false; m.renderOrder = 10; scene.add(m); return m; };
+      STRIKES.push({ ring: mk(rg, 0xc9584a), dot: mk(dg, 0xebede6), t: -1, dur: 1.2, x: 0, y: 0, z: 0, r: 4 });
+    }
+  }
+  function strikeWarn(x, y, z, r, dur) {
+    let s = STRIKES[0];
+    for (const k of STRIKES) if (k.t < 0) { s = k; break; }
+    s.t = 0; s.dur = dur || 1.2; s.x = x; s.y = y; s.z = z; s.r = r || 4;
+  }
+  function bolt(x, y, z) {
+    CARRY = 1;
+    // main channel from high above down to the spot, jagged, with two short branches
+    let px = x + rnd(-6, 6), py = y + 70, pz = z + rnd(-8, -2);
+    const segs = 11;
+    for (let i = 1; i <= segs; i++) {
+      const t = i / segs, nx = i === segs ? x : x + (px - x) * 0.35 + rnd(-3.5, 3.5) * (1 - t), ny = y + 70 * (1 - t), nz = i === segs ? z : z + rnd(-2, 2) * (1 - t);
+      pools.lines.spawn(nx, ny, nz, 0, 0, 0, rnd(0.22, 0.3), 0xebede6, 0, 0, nx - px, ny - py, nz - pz);
+      pools.lines.spawn(nx + 0.35, ny, nz, 0, 0, 0, 0.2, 0xebede6, 0, 0, nx - px, ny - py, nz - pz);
+      pools.lines.spawn(nx - 0.35, ny, nz, 0, 0, 0, 0.16, 0x7ab3b8, 0, 0, nx - px, ny - py, nz - pz);
+      pools.add.spawn(nx, ny, nz, 0, 0, 0, 0.22, 2.6, 1.2, 0xebede6, 0x7ab3b8, 0.7, 0, 0, 0.5); // glow along the channel
+      if ((i === 4 || i === 7) && Math.random() < 0.9) {
+        const bx = nx + rnd(-9, 9), by = ny - rnd(6, 12);
+        pools.lines.spawn(bx, by, nz, 0, 0, 0, 0.16, 0x7ab3b8, 0, 0, bx - nx, by - ny, 0);
+      }
+      px = nx; py = ny; pz = nz;
+    }
+    pools.add.spawn(x, y, z, 0, 0, 0, 0.3, 6, 16, 0xffffff, 0x7ab3b8, 1, 0, 0, 0.2);
+    pools.add.spawn(x, y + 30, z, 0, 0, 0, 0.2, 10, 20, 0xebede6, 0x36454c, 0.35, 0, 0, 0);
+    sparks(x, y, z, 30, 0, 0.6, 0, 26, 0xebede6);
+    for (let i = 0; i < 10; i++) pools.smoke.spawn(x + rnd(-2, 2), y + rnd(-0.5, 1), z + rnd(-2, 2), rnd(-4, 4), rnd(1, 4), rnd(-4, 4), rnd(0.7, 1.2), 1.5, 5, 0x54666b, 0x171f26, 0.45, 1.5, -0.5, 0, 0.1);
+    let near = null, nd = 1e9; // the bolt lands on the closest waiting ring
+    for (const s of STRIKES) if (s.t >= 0) { const e = Math.abs(s.x - x) + Math.abs(s.y - y) + Math.abs(s.z - z) * 0.2; if (e < nd) { nd = e; near = s; } }
+    if (near) near.t = -1;
+  }
+  function strikeUpdate(dt, scroll, time) {
+    for (const s of STRIKES) {
+      if (s.t < 0) { s.ring.visible = s.dot.visible = false; continue; }
+      s.t += dt; s.z += scroll;
+      if (s.t > s.dur + 0.15 || s.z > 60) { s.t = -1; s.ring.visible = s.dot.visible = false; continue; }
+      const k = Math.min(1, s.t / s.dur), blink = 0.55 + 0.45 * Math.sin(time * (10 + 22 * k)) ;
+      const rr = s.r * (1.5 - 0.5 * k);
+      s.ring.visible = s.dot.visible = true;
+      s.ring.position.set(s.x, s.y, s.z); s.ring.quaternion.copy(cam.quaternion); s.ring.scale.set(rr, rr, rr); s.ring.material.opacity = Math.min(1, (0.75 + 0.5 * k) * blink);
+      s.ring.material.color.setHex(k > 0.7 ? 0xebede6 : 0xc9584a);
+      s.dot.position.set(s.x, s.y, s.z); s.dot.quaternion.copy(cam.quaternion); s.dot.scale.set(s.r, s.r, s.r); s.dot.material.opacity = 0.3 + 0.6 * k * blink;
+    }
+  }
+
   // ---------- module ----------
   const fx = NR.fx = {
     rainLevel: 0, speedLevel: 0, sirenActive: false,
@@ -308,7 +440,7 @@
       core = c; T = c.THREE || window.THREE; C = NR.cfg || {}; scene = c.scene; cam = c.camera;
       v0 = new T.Vector3(); v1 = new T.Vector3(); v2 = new T.Vector3(); qt = new T.Quaternion(); eu = new T.Euler(); sc = new T.Vector3(); mt = new T.Matrix4(); col0 = new T.Color(); col1 = new T.Color();
       pools = { add: new PointPool(700, true, 6), smoke: new PointPool(320, false, 5), lines: new LinePool(400) };
-      buildRain(); buildSpeed(); buildSiren(); buildDebris();
+      buildRain(); buildSpeed(); buildSiren(); buildDebris(); buildRibbons(); buildStrikes(); scene.add(rib);
       shockMesh = new T.Mesh(new T.RingGeometry(0.7, 1, 40), new T.MeshBasicMaterial({ color: 0xf5d69e, transparent: true, opacity: 0, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, fog: false }));
       shockMesh.visible = false; shockMesh.frustumCulled = false;
       scene.add(pools.smoke.obj, pools.add.obj, pools.lines.obj, rain, spd, edge, deb, shockMesh);
@@ -323,6 +455,10 @@
           nearMissFx(p.x, p.y, Math.min(p.z, pp.z + 2), side); });
         bus.on('siren', () => { if (ready) sirenPulse(); });
         bus.on('boost', (d) => { boostOn = !!(d && d.on); if (boostOn && ready) { const p = playerPos(v1); pools.add.spawn(p.x, p.y - 0.3, p.z + 4.5, 0, 0, 20, 0.25, 3, 8, 0xebede6, 0x7ab3b8, 1, 0, 0, 0.5); } });
+        bus.on('roll', (d) => { if (!ready) return; lastRollEvt = core.time || 0; rollStart(d && d.dir, !!(d && d.boost)); });
+        // lightning strikes (sea wall): ring on warn, bolt on active. World may also call fx.strike directly.
+        bus.on('hazard', (d) => { if (!ready || !d || !fx.autoLightning || !/lightning|bolt|strike/i.test(d.kind || '') || !d.pos) return;
+          if (d.phase === 'warn') strikeWarn(d.pos.x, d.pos.y, d.pos.z, d.radius, d.seconds); else if (d.phase === 'active') bolt(d.pos.x, d.pos.y, d.pos.z); });
         bus.on('runStart', () => fx.reset(core));
       }
       ready = true;
@@ -333,6 +469,8 @@
       debOn = 0; deb.count = 0; wreckT = 0; sirenT = 0; edge.visible = false; shock.t = 9; shockMesh.visible = false;
       for (const r of RINGS) { r.t = -1; r.m.visible = false; }
       rainOff.set(0, 0, 0); spdU.uOff.value = 0; boostOn = false;
+      ribM = 0; rib.visible = false; rollFxT = -1; rollWas = false;
+      for (const s of STRIKES) { s.t = -1; s.ring.visible = s.dot.visible = false; }
     },
     update(dt, c) {
       if (!ready) return;
@@ -442,6 +580,25 @@
         r.m.material.opacity = (1 - t) * 0.85;
       }
 
+      // ---- roll trail ----
+      const rolling = !!(P && P.rolling && alive);
+      if (rolling && !rollWas && (c.time || 0) - lastRollEvt > 0.15) rollStart(P.rollDir, boosting); // no `roll` event seen: start from the flag
+      rollWas = rolling;
+      const emit = dt > 0 && alive && (rolling || rollFxT > 0);
+      if (rollFxT > 0) rollFxT -= dt;
+      if (emit) {
+        ribSample(1 + ribBoost * 0.3);
+        ribAcc += dt * 50 * q;
+        while (ribAcc >= 1) { ribAcc -= 1; const r = Math.random() < 0.5 ? 0 : 1;
+          if (carWorld(RIB_POD[r][0], RIB_POD[r][1], RIB_POD[r][2], v0)) pools.add.spawn(v0.x, v0.y, v0.z, rnd(-1, 1), rnd(-1, 1), rnd(4, 10), rnd(0.12, 0.22), 0.9, 0.3, r ? 0xebede6 : 0xf5d69e, r ? 0x7ab3b8 : 0xdb994d, 0.9, 2, 0, 0.8); }
+        // a few swirl streaks during the roll
+        if (Math.random() < dt * 28 * q) { const pp = playerPos(v2), a = Math.random() * 6.283; CARRY = 0.2;
+          pools.lines.spawn(pp.x + Math.cos(a) * 2.6, pp.y + Math.sin(a) * 2, pp.z + rnd(-3, 1), -Math.sin(a) * 10, Math.cos(a) * 10, rnd(20, 30), 0.25, 0x7ab3b8, 0, 0.05, 0, 0, 0, 3); CARRY = 1; }
+      } else if (dt > 0 && ribM) ribSample(0); // keep the tail flowing while it fades
+      if (ribM) ribUpdate(dt, scroll);
+      if (!rolling && rollFxT <= 0) ribBoost += (0 - ribBoost) * Math.min(1, dt * 3);
+      strikeUpdate(dt, scroll, c.time || 0);
+
       // ---- pools ----
       pools.add.update(dt, scroll); pools.smoke.update(dt, scroll); pools.lines.update(dt, scroll);
     },
@@ -450,6 +607,13 @@
     explode(pos) { if (!ready) return; const p = pos || playerPos(v1); explode(p.x, p.y, p.z); },
     nearMiss(pos) { if (!ready) return; const p = pos || playerPos(v1); nearMissFx(p.x, p.y, p.z, 1); },
     sirenPulse() { if (ready) sirenPulse(); },
-    stats() { return { add: pools.add.m, smoke: pools.smoke.m, lines: pools.lines.m, rain: rainCount, rainLevel, speed: fx.speedLevel, debris: debOn ? deb.count : 0, siren: sirenT > 0 }; },
+    // roll trail + whoosh on demand (player emits `roll`; this is for tests and other callers)
+    roll(dir, boost) { if (ready) { lastRollEvt = core.time || 0; rollStart(dir, !!boost); } },
+    // lightning: strike(pos, 'warn', seconds = 1.2, radius = 4) shows the target ring; strike(pos, 'active') drops the bolt
+    autoLightning: true, // fx answers `hazard` {kind:'lightning'} events by itself; set false if world calls strike()
+    strike(pos, phase = 'active', seconds, radius) { if (!ready || !pos) return; if (phase === 'warn') strikeWarn(pos.x, pos.y, pos.z, radius, seconds); else bolt(pos.x, pos.y, pos.z); },
+    bolt(pos) { if (ready && pos) bolt(pos.x, pos.y, pos.z); },
+    stats() { return { add: pools.add.m, smoke: pools.smoke.m, lines: pools.lines.m, rain: rainCount, rainLevel, speed: fx.speedLevel, debris: debOn ? deb.count : 0, siren: sirenT > 0,
+      ribbon: rib.visible ? ribM : 0, strikes: STRIKES.filter(s => s.t >= 0).length }; },
   };
 })();

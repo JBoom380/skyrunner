@@ -1,5 +1,5 @@
-// NEON RAIN audio: two-track music playlist (HTMLAudio) + all SFX synthesized with WebAudio (no files).
-// NR.audio = { init, update, reset, nowPlaying, setMusic(v), setSfx(v), unlock() }
+// SKYRUNNER audio: two-track music playlist (HTMLAudio) + all SFX synthesized with WebAudio (no files).
+// NR.audio = { init, update, reset, nowPlaying, setMusic(v), setSfx(v), unlock(), hazard(d) }  (listens: roll, hazard {kind, phase, pos})
 (function () {
   window.NR = window.NR || {};
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -139,7 +139,154 @@
     },
   };
 
-  // continuous voices: engine hum, turbine whine, wind rush, boost roar
+  // ---- round 2: roll whoosh + hazard voices (o: {phase, pan, k, boost}) ----
+  // noise through a filter with a gain envelope, panned; returns the source
+  function nz(ctx, out, nb, type, f, q, t, a, peak, r, loop) {
+    const n = noiseSrc(ctx, nb, loop), b = filt(ctx, type, f, q), g = gain(ctx, 0);
+    env(g.gain, t, a, peak, r); n.connect(b); b.connect(g); g.connect(out); return { n, b, g };
+  }
+  function hzOut(ctx, out, o) { const p = panner(ctx, (o && o.pan) || 0), g = gain(ctx, (o && o.k) || 1); g.connect(p); p.connect(out); return g; }
+  Object.assign(VOICES, {
+    // barrel roll: air whoosh that sweeps up and back down with a rotating wobble, panned across in the roll direction
+    roll(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, boost = !!(o && o.boost), d = boost ? 0.38 : 0.48, k = boost ? 1.45 : 1, pan = (o && o.pan) || 0;
+      const p = panner(ctx, -pan * 0.6); p.connect(out);
+      if (p.pan) { p.pan.setValueAtTime(-pan * 0.6, t); p.pan.linearRampToValueAtTime(pan * 0.8, t + d); }
+      const am = gain(ctx, 0.75); am.connect(p);
+      const w = nz(ctx, am, nb, 'bandpass', 600, 1.6, t, d * 0.45, 0.85 * k, d * 0.75);
+      w.b.frequency.setValueAtTime(500, t); w.b.frequency.exponentialRampToValueAtTime(boost ? 4200 : 3000, t + d * 0.5); w.b.frequency.exponentialRampToValueAtTime(600, t + d * 1.2);
+      const lfo = osc(ctx, 'sine', 2.2 / d), lg = gain(ctx, 0.3); lfo.connect(lg); lg.connect(am.gain); // one wobble per half turn
+      const lo = osc(ctx, 'sine', 170), log = gain(ctx, 0); lo.frequency.setValueAtTime(boost ? 220 : 170, t); lo.frequency.exponentialRampToValueAtTime(80, t + d);
+      env(log.gain, t, 0.04, 0.22 * k, d); lo.connect(log); log.connect(p);
+      return run([w.n, lfo, lo], t, d * 1.6);
+    },
+    // police drone spotted you: two quick rising/falling chirps
+    hzChirp(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o), srcs = [];
+      for (const [at, f0, f1] of [[0, 1500, 2300], [0.11, 2300, 1500]]) {
+        const v = osc(ctx, 'square', f0), lp = filt(ctx, 'lowpass', 3200, 0.8), g = gain(ctx, 0);
+        v.frequency.setValueAtTime(f0, t + at); v.frequency.exponentialRampToValueAtTime(f1, t + at + 0.08);
+        g.gain.setValueAtTime(0, t); env(g.gain, t + at, 0.005, 0.07, 0.08); v.connect(lp); lp.connect(g); g.connect(b); srcs.push(v);
+      }
+      return run(srcs, t, 0.3);
+    },
+    // flame jet: warn = rising gas hiss as the glow ramps; active = roaring burst with low flutter
+    hzFlame(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const h = nz(ctx, b, nb, 'bandpass', 900, 1.2, t, 0.8, 0.28, 0.25, true); h.b.frequency.setValueAtTime(700, t); h.b.frequency.exponentialRampToValueAtTime(3200, t + 0.9);
+        return run([h.n], t, 1.15);
+      }
+      const r = nz(ctx, b, nb, 'lowpass', 1100, 0.8, t, 0.04, 0.7, 1.1, true); r.b.frequency.setValueAtTime(1800, t); r.b.frequency.exponentialRampToValueAtTime(400, t + 1.1);
+      const fl = osc(ctx, 'sine', 13), fg = gain(ctx, 0.25); fl.connect(fg); fg.connect(r.g.gain);
+      const sub = osc(ctx, 'sawtooth', 52), sl = filt(ctx, 'lowpass', 180, 0.7), sg = gain(ctx, 0); env(sg.gain, t, 0.05, 0.35, 1.0); sub.connect(sl); sl.connect(sg); sg.connect(b);
+      return run([r.n, fl, sub], t, 1.25);
+    },
+    // laser fence: warn = rising electric hum; active = zap (falling saw) with a crackle
+    hzLaser(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const h = osc(ctx, 'sawtooth', 110), h2 = osc(ctx, 'square', 221), lp = filt(ctx, 'lowpass', 300, 4), g = gain(ctx, 0);
+        lp.frequency.setValueAtTime(300, t); lp.frequency.exponentialRampToValueAtTime(1800, t + 0.55);
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.12, t + 0.5); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+        h.connect(lp); h2.connect(lp); lp.connect(g); g.connect(b); return run([h, h2], t, 0.65);
+      }
+      const z = osc(ctx, 'sawtooth', 2600), zl = filt(ctx, 'bandpass', 2000, 2), zg = gain(ctx, 0);
+      z.frequency.setValueAtTime(2600, t); z.frequency.exponentialRampToValueAtTime(160, t + 0.2); zl.frequency.setValueAtTime(3000, t); zl.frequency.exponentialRampToValueAtTime(300, t + 0.2);
+      env(zg.gain, t, 0.003, 0.4, 0.22); z.connect(zl); zl.connect(zg); zg.connect(b);
+      const c = nz(ctx, b, nb, 'highpass', 2500, 0.7, t, 0.002, 0.3, 0.12);
+      const bz = osc(ctx, 'square', 60), bg = gain(ctx, 0); env(bg.gain, t, 0.005, 0.06, 0.25); bz.connect(bg); bg.connect(b);
+      return run([z, c.n, bz], t, 0.35);
+    },
+    // blast shutter / swinging gantry: warn = ratchet clicks; active = heavy low clank with a long ring
+    hzClank(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const n = noiseSrc(ctx, nb, true), bp = filt(ctx, 'bandpass', 1900, 3), g = gain(ctx, 0);
+        g.gain.setValueAtTime(0, t);
+        for (let i = 0; i < 7; i++) { const at = t + i * 0.085; g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(0.32, at + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.035); }
+        n.connect(bp); bp.connect(g); g.connect(b); return run([n], t, 0.7);
+      }
+      const srcs = [];
+      for (const [f, a, r] of [[96, 0.4, 0.9], [233, 0.26, 0.7], [517, 0.16, 0.5], [861, 0.09, 0.35]]) {
+        const v = osc(ctx, 'triangle', f), g = gain(ctx, 0); env(g.gain, t, 0.003, a, r);
+        v.frequency.setValueAtTime(f * 1.06, t); v.frequency.exponentialRampToValueAtTime(f, t + 0.1); v.connect(g); g.connect(b); srcs.push(v);
+      }
+      const n = nz(ctx, b, nb, 'lowpass', 1400, 0.7, t, 0.002, 0.5, 0.15); srcs.push(n.n);
+      return run(srcs, t, 1.0);
+    },
+    // dust storm gust (and steam hiss, brighter): a swelling band of wind
+    hzGust(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o), steam = !!(o && o.steam), warn = o && o.phase === 'warn';
+      const d = warn ? 0.9 : 1.5, w = nz(ctx, b, nb, steam ? 'highpass' : 'bandpass', 400, steam ? 0.7 : 1.1, t, d * 0.4, warn ? 0.3 : 0.6, d * 0.7, true);
+      if (steam) { w.b.frequency.setValueAtTime(3000, t); w.b.frequency.linearRampToValueAtTime(5000, t + d); }
+      else { w.b.frequency.setValueAtTime(260, t); w.b.frequency.exponentialRampToValueAtTime(1300, t + d * 0.45); w.b.frequency.exponentialRampToValueAtTime(380, t + d * 1.1); }
+      return run([w.n], t, d * 1.15);
+    },
+    // falling debris: warn = low grinding rumble; active = rock impacts with gravel
+    hzDebris(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const r = nz(ctx, b, nb, 'lowpass', 140, 1.5, t, 0.8, 0.8, 0.5, true);
+        const g = osc(ctx, 'sawtooth', 38), gl = filt(ctx, 'lowpass', 120, 1), gg = gain(ctx, 0); env(gg.gain, t, 0.7, 0.2, 0.5); g.connect(gl); gl.connect(gg); gg.connect(b);
+        return run([r.n, g], t, 1.35);
+      }
+      const srcs = [];
+      for (const [at, f] of [[0, 92], [0.13, 70], [0.3, 110], [0.42, 60]]) {
+        const v = osc(ctx, 'sine', f), g = gain(ctx, 0); g.gain.setValueAtTime(0, t);
+        v.frequency.setValueAtTime(f * 1.5, t + at); v.frequency.exponentialRampToValueAtTime(f * 0.5, t + at + 0.2);
+        env(g.gain, t + at, 0.004, 0.5, 0.25); v.connect(g); g.connect(b); srcs.push(v);
+      }
+      const c = nz(ctx, b, nb, 'bandpass', 1600, 0.8, t, 0.01, 0.3, 0.6); srcs.push(c.n);
+      return run(srcs, t, 0.8);
+    },
+    // lightning strike: warn = static crackle building on the ring; active = the sharp crack (thunder comes from `lightning`)
+    hzLightning(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const n = noiseSrc(ctx, nb, true), bp = filt(ctx, 'bandpass', 3400, 1.2), g = gain(ctx, 0);
+        g.gain.setValueAtTime(0, t); let s = 0;
+        for (let i = 0; s < 1.15; i++) { const at = t + s, a = 0.05 + 0.25 * (s / 1.15); g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(a, at + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.03); s += 0.03 + ((i * 53) % 7) * 0.012 * (1 - s / 1.3); }
+        const h = osc(ctx, 'square', 50), hl = filt(ctx, 'lowpass', 400, 1), hg = gain(ctx, 0);
+        hg.gain.setValueAtTime(0.0001, t); hg.gain.linearRampToValueAtTime(0.08, t + 1.1); hg.gain.linearRampToValueAtTime(0.0001, t + 1.2);
+        n.connect(bp); bp.connect(g); g.connect(b); h.connect(hl); hl.connect(hg); hg.connect(b);
+        return run([n, h], t, 1.25);
+      }
+      const c = nz(ctx, b, nb, 'highpass', 1500, 0.6, t, 0.002, 0.9, 0.3);
+      const s = nz(ctx, b, nb, 'bandpass', 600, 1, t, 0.003, 0.6, 0.5);
+      const sub = osc(ctx, 'sine', 60), sg = gain(ctx, 0); sub.frequency.setValueAtTime(90, t); sub.frequency.exponentialRampToValueAtTime(35, t + 0.5);
+      env(sg.gain, t, 0.004, 0.6, 0.6); sub.connect(sg); sg.connect(b);
+      return run([c.n, s.n, sub], t, 0.75);
+    },
+    // sea wall spray column: warn = swell rising; active = breaking wave crash
+    hzWave(ctx, out, nb, o) {
+      const t = ctx.currentTime + 0.005, b = hzOut(ctx, out, o);
+      if (o && o.phase === 'warn') {
+        const s = nz(ctx, b, nb, 'lowpass', 300, 0.9, t, 0.9, 0.5, 0.35, true); s.b.frequency.setValueAtTime(250, t); s.b.frequency.exponentialRampToValueAtTime(1400, t + 1.0);
+        return run([s.n], t, 1.3);
+      }
+      const c = nz(ctx, b, nb, 'lowpass', 2600, 0.6, t, 0.03, 0.85, 1.5, true); c.b.frequency.setValueAtTime(3200, t); c.b.frequency.exponentialRampToValueAtTime(260, t + 1.5);
+      const f = nz(ctx, b, nb, 'highpass', 3500, 0.6, t + 0.1, 0.2, 0.25, 1.0, true);
+      const sub = osc(ctx, 'sine', 48), sg = gain(ctx, 0); env(sg.gain, t, 0.02, 0.45, 0.8); sub.connect(sg); sg.connect(b);
+      return run([c.n, f.n, sub], t, 1.7);
+    },
+  });
+  // hazard kind -> voice (world names are free-form; match loosely)
+  function hazardVoice(kind) {
+    const k = String(kind || '').toLowerCase();
+    if (/spot|search|drone/.test(k)) return 'drone';
+    if (/flame|fire|jet|burn/.test(k)) return 'hzFlame';
+    if (/laser|fence|beam/.test(k)) return 'hzLaser';
+    if (/shutter|blast|gate|door|gantry|sign|swing|clank/.test(k)) return 'hzClank';
+    if (/steam|vent/.test(k)) return 'steam';
+    if (/dust|storm|gust|wind/.test(k)) return 'hzGust';
+    if (/debris|rock|fall|rubble/.test(k)) return 'hzDebris';
+    if (/lightning|bolt|strike/.test(k)) return 'hzLightning';
+    if (/wave|spray|sea|surf/.test(k)) return 'hzWave';
+    return null;
+  }
+
+  // continuous voices: engine hum, turbine whine, wind rush, boost roar, drone hum (searchlight)
   function makeLoops(ctx, out, nb) {
     const L = {};
     L.eng = gain(ctx, 0); L.eng.connect(out);
@@ -152,7 +299,12 @@
     L.boost = gain(ctx, 0); L.boost.connect(out); L.boostLP = filt(ctx, 'lowpass', 900, 0.9); L.boostLP.connect(L.boost);
     L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 0.7; L.bn.connect(L.boostLP);
     L.bo = osc(ctx, 'sawtooth', 70); L.bo.connect(L.boostLP);
-    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo]) s.start();
+    // drone hum: detuned buzz with a fast rotor tremolo; gain follows how recently a drone spotted the car
+    L.drone = gain(ctx, 0); L.drone.connect(out); L.droneAM = gain(ctx, 0.7); L.droneAM.connect(L.drone);
+    L.droneLP = filt(ctx, 'lowpass', 700, 3); L.droneLP.connect(L.droneAM);
+    L.d1 = osc(ctx, 'sawtooth', 118); L.d2 = osc(ctx, 'sawtooth', 120.5); L.d1.connect(L.droneLP); L.d2.connect(L.droneLP);
+    L.dl = osc(ctx, 'sine', 23); L.dlg = gain(ctx, 0.3); L.dl.connect(L.dlg); L.dlg.connect(L.droneAM.gain);
+    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.d1, L.d2, L.dl]) s.start();
     return L;
   }
 
@@ -190,7 +342,9 @@
       const kind = /start|confirm|ok|retry|select|enter|resume|play/.test(a) ? 'confirm' : /back|quit|menu|close|cancel/.test(a) ? 'back' : 'click';
       play('ui', { kind });
     });
-    B.on('state', d => { if (d && d.state === 'DEAD') boosting = false; });
+    B.on('state', d => { if (d && d.state === 'DEAD') { boosting = false; spotted = 0; } });
+    B.on('roll', d => { lastRoll = now(); playRoll(d && d.dir, d && d.boost); });
+    B.on('hazard', onHazard);
     document.addEventListener('visibilitychange', onVis);
   }
 
@@ -266,13 +420,48 @@
   }
   A.play = play;
 
+  // ---- roll + hazards ----
+  let spotted = 0, lastRoll = -9, rollWas = false;
+  const lastHz = {};
+  const now = () => (core && typeof core.time === 'number' ? core.time : performance.now() / 1000);
+  function playRoll(dir, boost) {
+    const dx = dir && typeof dir.x === 'number' ? dir.x : 0;
+    play('roll', { pan: Math.max(-1, Math.min(1, dx)), boost: !!boost });
+  }
+  // pan from the hazard's x against the car; gentle fade with distance ahead so warnings far up the corridor stay audible
+  function hzOpts(d, phase) {
+    const p = NR.player && NR.player.pos, pos = d && d.pos;
+    let pan = 0, k = 1;
+    if (pos && typeof pos.x === 'number') {
+      pan = Math.max(-0.85, Math.min(0.85, (pos.x - (p ? p.x : 0)) / 14));
+      const dz = Math.abs((pos.z || 0) - (p ? p.z : 0));
+      k = 0.4 + 0.6 * Math.max(0, Math.min(1, 1 - dz / 260));
+    }
+    return { phase, pan, k };
+  }
+  const HZ_GAP = { warn: 0.4, active: 0.22 };
+  function onHazard(d) {
+    if (!d) return;
+    const v = hazardVoice(d.kind), phase = d.phase === 'warn' ? 'warn' : 'active', t = now();
+    if (!v || (core && core.state !== 'PLAY' && core.state !== 'TITLE')) return;
+    if (v === 'drone') { // searchlight on the car (may arrive every frame): hum level + a chirp at most every 0.9 s
+      spotted = Math.max(spotted, phase === 'warn' && !/spot/i.test(d.kind) ? 0.45 : 1);
+      if (t - (lastHz.chirp || -9) > 0.9) { lastHz.chirp = t; play('hzChirp', hzOpts(d, phase)); }
+      return;
+    }
+    const key = v + phase; if (t - (lastHz[key] || -9) < HZ_GAP[phase]) return; lastHz[key] = t;
+    const o = hzOpts(d, phase);
+    if (v === 'steam') { o.steam = true; play('hzGust', o); } else play(v, o);
+  }
+  A.hazard = onHazard;
+
   function onVis() {
     if (!el) return;
     if (document.hidden) { if (!el.paused) { el.pause(); hiddenPaused = true; } if (ctx && ctx.suspend) ctx.suspend().catch(() => {}); }
     else { if (ctx && ctx.resume) ctx.resume().catch(() => {}); if (hiddenPaused) { hiddenPaused = false; const p = el.play(); if (p && p.catch) p.catch(() => {}); } }
   }
 
-  function reset() { boosting = false; }
+  function reset() { boosting = false; spotted = 0; rollWas = false; }
 
   let lastM = -1, lastS = -1, lastPause = false;
   function update(dt, c) {
@@ -281,6 +470,11 @@
     const st = settings(), m = S(st.music, musicV), s = S(st.sfx, sfxV), paused = core && core.state === 'PAUSE';
     if (m !== lastM || paused !== lastPause) { lastM = m; lastPause = paused; musicV = m; applyMusic(); }
     if (s !== lastS) { lastS = s; setSfx(s); }
+    // roll fallback: player rolled but no `roll` event arrived
+    const P0 = NR.player, rl = !!(P0 && P0.rolling);
+    if (rl && !rollWas && now() - lastRoll > 0.15) { lastRoll = now(); playRoll(P0.rollDir, P0.boosting); }
+    rollWas = rl;
+    if (spotted > 0) spotted = Math.max(0, spotted - (dt || 0) * 2.5);
     if (!ctx || !loops || ctx.state !== 'running') return;
     paramT += c && c.dt ? c.dt : dt; if (paramT < 1 / 30) return; paramT = 0; // param writes at 30 Hz
     const t = ctx.currentTime, state = core ? core.state : 'TITLE', C = NR.cfg || {};
@@ -300,6 +494,9 @@
     loops.boostLP.frequency.setTargetAtTime(b && live ? 1400 : 500, t, 0.15);
     loops.bo.frequency.setTargetAtTime(62 + k * 20, t, 0.2);
     loops.boost.gain.setTargetAtTime(b && live ? 0.3 : 0, t, b ? 0.06 : 0.25);
+    const sp2 = live || idle ? spotted : 0;
+    loops.drone.gain.setTargetAtTime(0.11 * sp2, t, sp2 > 0.5 ? 0.05 : 0.2);
+    loops.droneLP.frequency.setTargetAtTime(500 + 900 * sp2, t, 0.1);
   }
 
   // test hook: render one voice offline -> Promise<Float32Array> (mono)
@@ -314,7 +511,8 @@
     return { ctx: ctx ? ctx.state : 'none', unlocked: A.unlocked, playing: A.playing, track: A.track, nowPlaying: A.nowPlaying,
       routed, musicGain: musicGain ? musicGain.gain.value : null, elVolume: el ? el.volume : null, sfxGain: sfxBus ? sfxBus.gain.value : null,
       src: el ? el.currentSrc : '', time: el ? el.currentTime : 0, paused: el ? el.paused : true, preload: pre ? pre.src : '', voices: A.voices,
-      eng: loops ? loops.eng.gain.value : null, boost: loops ? loops.boost.gain.value : null, wind: loops ? loops.wind.gain.value : null };
+      eng: loops ? loops.eng.gain.value : null, boost: loops ? loops.boost.gain.value : null, wind: loops ? loops.wind.gain.value : null,
+      drone: loops ? loops.drone.gain.value : null, spotted };
   };
   A._el = () => el;
 })();

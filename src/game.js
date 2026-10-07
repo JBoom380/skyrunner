@@ -1,4 +1,4 @@
-// NEON RAIN core: renderer, low-res pixel pass, camera, loop, state machine, run state, scoring, district blend.
+// SKYRUNNER core: renderer, low-res pixel pass, camera, loop, state machine, run state, scoring, district blend.
 // Owned by the core author. Builders: do not edit. See SPEC.md.
 (function () {
   const THREE = window.THREE, C = NR.cfg;
@@ -69,7 +69,7 @@
   const core = NR.core = {
     THREE, scene, camera, renderer, settings, isTouch, time: 0, dt: 0, state: 'TITLE',
     input: { mx: 0, my: 0, boost: false, siren: false, pause: false },
-    speed: 0, scroll: 0, dist: 0, score: 0, best: +(safeLoad(C.BEST_KEY).score || 0), nearMisses: 0,
+    speed: 0, scroll: 0, dist: 0, score: 0, difficulty: 0, fogExtra: 0, best: +(safeLoad(C.BEST_KEY).score || 0), nearMisses: 0,
     district: 0, blend: { a: 0, b: 0, t: 0 }, loop: 0, view: null,
     camOffset: new THREE.Vector3(0, 4.2, 13.5), lookDrop: 17, // camera above/behind; look below the car so it rides at mid-screen, above the thumb controls
     shake(a, s) { shakeA = Math.max(shakeA, a); shakeT = Math.max(shakeT, s); },
@@ -90,7 +90,7 @@
   function setState(s) { const prev = core.state; core.state = s; NR.bus.emit('state', { state: s, prev }); }
 
   function startRun() {
-    core.speed = C.SPEED_START; core.dist = 0; core.score = 0; core.nearMisses = 0; core.district = 0; core.loop = 0;
+    core.speed = C.SPEED_START; core.difficulty = 0; core.fogExtra = 0; core.dist = 0; core.score = 0; core.nearMisses = 0; core.district = 0; core.loop = 0;
     core.blend = { a: 0, b: 0, t: 0 }; chain = 0; chainT = 0;
     for (const m of MODS) call(m, 'reset', core);
     setState('PLAY'); NR.bus.emit('runStart', {}); NR.bus.emit('district', { index: 0, name: NR.DISTRICTS[0].name, loop: 0 });
@@ -99,7 +99,9 @@
   let chain = 0, chainT = 0;
   NR.bus.on('nearMiss', d => {
     core.nearMisses++; chainT = C.CHAIN_WINDOW; chain = Math.min(chain + 1, 9);
-    const pts = C.NEAR_MISS_POINTS * chain; core.score += pts; NR.bus.emit('score', { points: pts, reason: chain > 1 ? `NEAR MISS x${chain}` : 'NEAR MISS', pos: d && d.pos });
+    const roll = NR.player && NR.player.rolling;
+    const pts = C.NEAR_MISS_POINTS * chain * (roll ? 2 : 1); core.score += pts;
+    NR.bus.emit('score', { points: pts, reason: (roll ? 'ROLL MISS' : 'NEAR MISS') + (chain > 1 ? ` x${chain}` : ''), pos: d && d.pos });
   });
   NR.bus.on('crash', () => {
     if (core.state !== 'PLAY') return;
@@ -115,6 +117,8 @@
     core.speed = Math.min(C.SPEED_MAX, core.speed + C.SPEED_RAMP * dt);
     const v = core.speed + boost;
     core.scroll = v * dt; core.dist += core.scroll;
+    // difficulty 0..~2: ramps over the first 3 districts, then +0.35 per completed cycle
+    core.difficulty = Math.min(1, core.dist / (C.DISTRICT_LEN * 3)) + core.loop * 0.35;
     core.score += core.scroll * (1 + core.loop * 0.5);
     if (chainT > 0 && (chainT -= dt) <= 0) chain = 0;
     // districts
@@ -129,7 +133,7 @@
   function applyBlend() {
     const A = NR.DISTRICTS[core.blend.a], B = NR.DISTRICTS[core.blend.b], t = core.blend.t;
     fogA.setHex(A.fog); fogB.setHex(B.fog); scene.fog.color.copy(fogA.lerp(fogB, t));
-    scene.fog.density = A.density + (B.density - A.density) * t;
+    scene.fog.density = (A.density + (B.density - A.density) * t) * (1 + Math.max(0, core.fogExtra || 0));
   }
 
   // camera: chase behind the player, lag, bank roll, boost FOV kick, shake

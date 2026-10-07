@@ -50,7 +50,13 @@ try:
         # events log; controls may be absent, so drive NR.core.input directly when it is the core's own object
         page.evaluate("""() => {
           window.EV = []; for (const e of ['hit','crash','boost','siren','sirenReady']) NR.bus.on(e, d => EV.push(e));
-          window.INP = () => NR.controls && NR.controls.state ? NR.controls.state : NR.core.input;
+          // controls rewrites the stick/boost every PLAY frame, so test writes are re-applied after controls.update
+          window.OV = {}; const raw = () => NR.controls && NR.controls.state ? NR.controls.state : NR.core.input;
+          if (NR.controls && typeof NR.controls.update === 'function') { const cu = NR.controls.update;
+            NR.controls.update = function () { const r = cu.apply(this, arguments); Object.assign(raw(), OV); return r; }; }
+          window.INP = () => new Proxy(raw(), { set(t, k, v) { t[k] = v; OV[k] = v; return true; } });
+          // only stubbed hits in this test (real hazards/traffic would hit the car at the corridor edge)
+          for (const m of ['world', 'traffic']) if (NR[m] && typeof NR[m].collide === 'function') { NR[m].__real = NR[m].collide; NR[m].collide = () => ({ hit: false }); }
           NR.core.start();
         }""")
         page.wait_for_timeout(300)
@@ -150,7 +156,7 @@ try:
         page.wait_for_timeout(300)
         r = page.evaluate("({hull: NR.player.hull, alive: NR.player.alive, vis: NR.player.car.group.visible, rx: NR.player.car.group.rotation.x})")
         check("restart resets car", r["hull"] == 3 and r["alive"] and r["vis"] and abs(r["rx"]) < 0.2, r)
-        page.evaluate("if (NR.world.__orig) NR.world.collide = NR.world.__orig; else delete NR.world")
+        page.evaluate("for (const m of ['world', 'traffic']) if (NR[m] && NR[m].__real) NR[m].collide = NR[m].__real")
 
         mine = [e for e in errors if "player" in e.lower()]
         check("no console errors from player", not mine, mine)

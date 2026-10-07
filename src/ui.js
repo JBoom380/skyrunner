@@ -1,4 +1,4 @@
-// NEON RAIN ui: title screen (draft A, no subtitle), menus, HUD, pause and results. All DOM lives inside #ui. See SPEC.md.
+// SKYRUNNER ui: title screen (draft A, no subtitle), menus, HUD, pause and results. All DOM lives inside #ui. See SPEC.md.
 // NR.ui = { init, update, reset, screen, artMode, ember, open(name), move(d), activate(), back(), runs(), showDead() }
 (function () {
   window.NR = window.NR || {};
@@ -132,7 +132,7 @@
     const t = E.title = h('div', 'lay ttl', null, root);
     E.bg = h('canvas', '', null, t); E.fx = h('canvas', '', null, t); E.fx.width = 270; E.fx.height = 480;
     h('div', 'shade', null, t);
-    E.logo = h('h1', 'logo', 'NEON<br>RAIN', t);
+    E.logo = h('h1', 'logo', 'SKY<br>RUNNER', t);
     E.menu = h('div', 'menu', null, t);
     E.menuBtns = ['START PURSUIT', 'BEST RUNS', 'SETTINGS', 'CREDITS'].map((s, i) => {
       const b = h('button', '', '<i>&#9656;</i>' + s, E.menu); b.dataset.i = i;
@@ -582,7 +582,7 @@
     setSel(0); paintFoot(true);
     const B = NR.bus;
     if (B) {
-      B.on('state', d => sync(d && d.state));
+      B.on('state', d => { sync(d && d.state); if (d && d.state !== 'TITLE') { const g = document.getElementById('nrgate'); if (g) g.remove(); } });
       B.on('score', d => { if (core.state === 'PLAY' && d) pop(d.reason || '', d.points ? '+' + fmt(d.points) : ''); });
       B.on('district', d => { if (d) banner(d); });
       B.on('hit', () => { E.edge.classList.remove('go'); void E.edge.offsetWidth; E.edge.classList.add('go'); });

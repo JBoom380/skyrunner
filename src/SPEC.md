@@ -1,4 +1,4 @@
-# NEON RAIN: shared build contract
+# SKYRUNNER (formerly NEON RAIN): shared build contract
 
 Every builder reads this first. Edit ONLY your own file. Do not edit `game.js`, `config.js`, `cruiser.js`, `dev.html`, `build.py` or this file. Report any contract change you need in your final message.
 
@@ -88,3 +88,18 @@ Big touch targets (>= 56 CSS px), safe-area insets respected.
 
 ## Testing
 Each builder tests their module in the real page with Playwright (Python, `from playwright.sync_api import sync_playwright`), Chromium with args ["--use-angle=d3d11","--enable-gpu"], viewport 390x844 with has_touch=True, is_mobile=True. Serve the repo root with `python -m http.server <port>` (pick a random free port; kill only your own server by PID). Check: no console errors, your API works, 60 fps (measure `requestAnimationFrame` intervals over 5 s in PLAY), and screenshots look right. Put test scripts in `../tests/<module>_test.py`. Never `taskkill` all chrome/python; kill by PID only.
+
+## Addendum 2026-10-06: ROLL + hazards + progression (round 2)
+Core (game.js, done): `core.difficulty` (0 at start, 1 after three districts, +0.35 per completed cycle; use it for all ramps), `core.fogExtra` (world sets it 0..~3 for dust storms / steam; the core multiplies fog density by 1+fogExtra; world must ease it back to 0), near misses while `NR.player.rolling` score double as "ROLL MISS".
+New/changed contracts:
+- controls: `state.roll` (true ONE frame on press). Touch: a ROLL button on the right side (between SIREN and BOOST, so the right thumb can hold BOOST and tap ROLL with a slide or a second finger; size >= 64 CSS px, palette teal-grey). Keyboard: R (or Ctrl) rolls toward the held arrow/WASD direction. Gamepad: B. Add "R ROLL" to the keyboard key panel.
+- player: `rolling` (bool), `rollT` (0..1 progress), `rollDir` {x, y} (unit, the stick direction snapped to the 4 directions; centre = spin in place), `rollCooldown` (s), `push(x, y)` (external sideways/vertical impulse in m/s, eased), `drainSiren(amount)`. ROLL: on `input.roll` and cooldown 0: a 0.45 s barrel roll (car rotates 360 deg on its long axis for left/right, a half loop pitch for up/down, a flat spin when centred) moving about 6 m toward rollDir (5 m up/down), 0.3 s of no-collision in the middle of the roll, 1.0 s cooldown. With boost held: 1.5x distance and 0.35 s. Emit `roll` {dir, boost}. Clamp to the corridor.
+- world: progressive density and the new hazards below, all telegraphed (lit, warning blink or marker >= 1.5 s before they become dangerous), all with a fair path, introduced gradually by `core.difficulty` (a hazard type first appears rarely, then more often; cycle 2+ mixes hazards from other districts). `collide(box)` returns `kind` = the hazard name. Emit `hazard` {kind, phase:'warn'|'active', pos} for audio.
+  Neon Canyon: dropping/swinging sign gantries; police drones whose searchlight cone sweeps the corridor (inside the cone: `NR.player.drainSiren(0.4*dt)` and emit `hazard` {kind:'spotted'}; touching the drone body = hit).
+  Fire Stacks: flame jets that fire across the corridor on a visible timer (glow ramps up, then a burst ~1 s); steam columns (non-lethal, raise core.fogExtra while inside and hide the view).
+  The Arcology: laser fences (thin bright lines in a frame) that open and close in a rhythm; blast shutters that slide shut leaving a gap that moves.
+  Dust Sea: dust storms (fogExtra up to ~3, wind gusts via `player.push`); debris falling from the ruins (shadow/marker on the corridor first, then rocks fall).
+  The Sea Wall: lightning strikes (a target ring glows on a spot for ~1.2 s, then a bolt hits it = hit if inside, plus core.flash); wave spray columns (push the car sideways, non-lethal) plus the existing obstacles.
+- traffic: lane-changers (cars that swerve across lanes near the player with blinkers ~1 s ahead), frequency by `core.difficulty`; more density over time.
+- fx: roll trail (two light ribbons from the pods during a roll), roll whoosh streaks; lightning ground ring + bolt particles if world asks (`NR.fx.sparks` etc. existing API).
+- audio: `roll` whoosh (louder with boost), hazard sounds by `hazard` {kind, phase}: drone hum/warning chirp when spotted, flame jet roar, laser hum + zap, shutter clank, dust wind gust, debris rumble, lightning crack, wave crash.

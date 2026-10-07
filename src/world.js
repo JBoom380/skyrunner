@@ -1,4 +1,4 @@
-// NEON RAIN world: sky, painted horizon, five streaming districts, fair obstacles. See SPEC.md "NR.world".
+// SKYRUNNER world: sky, painted horizon, five streaming districts, fair obstacles. See SPEC.md "NR.world".
 // Treadmill: every object lives in `root`; root.position.z = travel - base, so nothing moves per frame on the CPU.
 // Objects are placed at local z = -(q - base), q = track metres from the run start. Pools are rings in spawn order.
 (function () {
@@ -354,6 +354,7 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     const bgeo = new THREE.BufferGeometry(); bgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(14 * 3), 3));
     bolt = new THREE.Line(bgeo, new THREE.LineBasicMaterial({ color: new THREE.Color(2.2, 2.3, 2.5), fog: false })); bolt.visible = false; bolt.frustumCulled = false; scene.add(bolt);
 
+    buildHazards();
     loadArt();
   }
 
@@ -614,6 +615,384 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     if (chance(0.06)) { const x = rr(250, 900); solid(P.box, q + 20, x, GY + 6, rr(30, 60), 14, rr(140, 220), 0x15191d); glow(q + 20, x, GY + 16, 0xd9953f, 6, 1.2); }
   }
 
+  // ------------------------------------------------------------------ hazards (round 2: SPEC addendum 2026-10-06)
+  // Timed, animated hazards. Records live in track space (q); every frame they are drawn into four small dynamic batches
+  // (solid boxes, additive boxes, additive cones, glow points) and publish their lethal boxes to HB for collide().
+  // Fairness: each is lit and visible from far, warns >= 1.5 s before it turns lethal, and always leaves a gap the car fits.
+  const HZ = [], HZ_FREE = [], HB_CAP = 48, HB = new Float64Array(HB_CAP * 6), HBK = new Array(HB_CAP).fill('');
+  let nHB = 0, dS = null, dA = null, dC = null, dG = null, nS = 0, nA = 0, nC = 0, nG = 0, fogD = 0.002, fogT = 0, stormGust = 0;
+  const DS_CAP = 220, DA_CAP = 520, DC_CAP = 40, DG_CAP = 1600;
+  const HC = {}; for (const [k, h] of Object.entries({ amber: 0xdb994d, amb2: 0xd9953f, red: 0xc9584a, dred: 0x9e4236, teal: 0x7ab3b8, tealD: 0x38737d, white: 0xebede6,
+    cream: 0xf5d69e, orange: 0xe07a2a, steel: 0x243038, steel2: 0x36454c, dark: 0x171f26, rust: 0x331f12, rock: 0x5c331a, dust: 0xd08a4a, foam: 0xb8ccd0, grey: 0x8f9a9e })) HC[k] = new THREE.Color(h);
+  const ZAX = new THREE.Vector3(0, 0, 1), _d = new THREE.Vector3(), _w = new THREE.Vector3();
+  const HZ_BY_D = [[['drone', 0.5], ['swing', 0.28], ['drop', 0.22]], [['flame', 0.65], ['steam', 0.35]], [['laser', 0.55], ['shutter', 0.45]], [['storm', 0.42], ['debris', 0.58]], [['lightning', 0.55], ['spray', 0.45]]];
+  const HZ_MIX = [['drone', 1], ['swing', 0.6], ['drop', 0.6], ['flame', 1], ['steam', 0.5], ['laser', 1], ['shutter', 0.8], ['debris', 1], ['lightning', 1]];
+  const diffAt = q => Math.min(1, Math.max(0, q) / (L * 3)) + Math.floor(Math.max(0, q) / (L * ND)) * 0.35;
+  const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const blink = (hz, t) => (Math.sin(t * hz * 6.2832) > 0 ? 1 : 0.15);
+
+  function buildHazards() {
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const sm = new THREE.MeshBasicMaterial({ color: 0xffffff }); // unlit with a fixed face shade: hazards must read in the dark
+    sm.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vSh;').replace('#include <begin_vertex>', '#include <begin_vertex>\n vSh = 0.6 + 0.4 * max(normal.y, 0.0) + 0.25 * max(normal.z, 0.0) - 0.15 * max(-normal.y, 0.0);');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vSh;').replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( diffuse * vSh, opacity );');
+    };
+    sm.customProgramCacheKey = () => 'nrHzSolid';
+    dS = new THREE.InstancedMesh(box, sm, DS_CAP);
+    dA = new THREE.InstancedMesh(box.clone(), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }), DA_CAP);
+    const cg = new THREE.ConeGeometry(1, 1, 14, 1, true); cg.translate(0, -0.5, 0); cg.rotateX(-Math.PI / 2); // apex at the origin, opens along +z to radius 1 at z = 1
+    dC = new THREE.InstancedMesh(cg, new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: `varying vec3 vC; varying float vZ;
+void main(){ vZ = position.z;
+#ifdef USE_INSTANCING_COLOR
+  vC = instanceColor;
+#else
+  vC = vec3(1.0);
+#endif
+  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+      fragmentShader: 'varying vec3 vC; varying float vZ; void main(){ float k = pow(1.0 - clamp(vZ, 0.0, 1.0), 0.8) * smoothstep(0.0, 0.06, vZ); gl_FragColor = vec4(vC * k, 1.0); }' }), DC_CAP);
+    for (const m of [dS, dA, dC]) {
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(m.instanceMatrix.count * 3), 3);
+      m.instanceColor.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; m.count = 0; root.add(m);
+    }
+    dS.name = 'world.hzSolid'; dA.name = 'world.hzAdd'; dC.name = 'world.hzCone'; dA.renderOrder = 4; dC.renderOrder = 5;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(DG_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aCol', new THREE.BufferAttribute(new Float32Array(DG_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aMode', new THREE.BufferAttribute(new Float32Array(DG_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7); g.setDrawRange(0, 0);
+    dG = new THREE.Points(g, P.glow.mesh.material); dG.name = 'world.hzGlow'; dG.frustumCulled = false; dG.renderOrder = 6; root.add(dG);
+  }
+  // draw helpers (track q, world x/y); additive colours are faded by distance by hand (fog off on additive)
+  function fadeQ(q) { const d = Math.abs(travel - q - 12); return Math.exp(-Math.pow(d * fogD * 0.5, 2)); }
+  function putM(mesh, i, x, y, q, sx, sy, sz) { _p.set(x, y, zl(q)); _s.set(sx, sy, sz); _m.compose(_p, _q, _s); _m.toArray(mesh.instanceMatrix.array, i * 16); }
+  function putC(mesh, i, col, k) { const a = mesh.instanceColor.array; a[i * 3] = col.r * k; a[i * 3 + 1] = col.g * k; a[i * 3 + 2] = col.b * k; }
+  function hS(x, y, q, sx, sy, sz, col, k, rz, rx) { if (nS >= DS_CAP) return; _e.set(rx || 0, 0, rz || 0); _q.setFromEuler(_e); putM(dS, nS, x, y, q, sx, sy, sz); putC(dS, nS, col, k || 1); nS++; }
+  function hA(x, y, q, sx, sy, sz, col, k, rz) { if (nA >= DA_CAP || k <= 0.003) return; _e.set(0, 0, rz || 0); _q.setFromEuler(_e); putM(dA, nA, x, y, q, sx, sy, sz); putC(dA, nA, col, k * fadeQ(q)); nA++; }
+  function hC(x, y, q, dx, dy, dzW, len, rad, col, k) { // dzW: direction along world z (+ = toward the camera)
+    if (nC >= DC_CAP || k <= 0.003) return; _d.set(dx, dy, dzW).normalize(); _q.setFromUnitVectors(ZAX, _d); putM(dC, nC, x, y, q, rad, rad, len); putC(dC, nC, col, k * fadeQ(q)); nC++;
+  }
+  function hG(x, y, q, col, k, size) {
+    if (nG >= DG_CAP || k <= 0.003) return; const i = nG++, a = dG.geometry.attributes;
+    a.position.array[i * 3] = x; a.position.array[i * 3 + 1] = y; a.position.array[i * 3 + 2] = zl(q);
+    a.aCol.array[i * 3] = col.r * k; a.aCol.array[i * 3 + 1] = col.g * k; a.aCol.array[i * 3 + 2] = col.b * k;
+    a.aMode.array[i * 3] = 0; a.aMode.array[i * 3 + 1] = 0; a.aMode.array[i * 3 + 2] = size;
+  }
+  function hBox(x0, x1, y0, y1, q0, q1, kind) { if (nHB >= HB_CAP) return; const o = nHB * 6; HB[o] = x0; HB[o + 1] = x1; HB[o + 2] = y0; HB[o + 3] = y1; HB[o + 4] = q0; HB[o + 5] = q1; HBK[nHB++] = kind; }
+  function hEmit(kind, phase, x, y, q, extra) {
+    const d = { kind, phase, pos: new THREE.Vector3(x, y, travel - q) }; if (extra) Object.assign(d, extra);
+    NR.bus.emit('hazard', d);
+  }
+  function hNew(kind, q, end) {
+    const h = HZ_FREE.pop() || { xs: new Float32Array(4), ys: new Float32Array(4), ts: new Float32Array(4) };
+    Object.assign(h, { kind, q, end: end === undefined ? q : end, x: 0, y: 0, a: 0, b: 0, c: 0, w: 0, s: 1, ph: R() * 6.28, n: 0, st: 0, t0: 0, warned: false, act: false, inside: false, cool: 0 });
+    h.xs.fill(0); h.ys.fill(0); h.ts.fill(-1); HZ.push(h); return h;
+  }
+  function pickW(list) { let s = 0; for (const e of list) s += e[1]; let r = R() * s; for (const e of list) if ((r -= e[1]) <= 0) return e[0]; return list[0][0]; }
+  function nearHz(kind, q, span) { for (const h of HZ) if (h.kind === kind && h.end > q - span && h.q < q + span) return true; return false; }
+
+  // choose and place a hazard for an obstacle slot; returns false to fall back to a static obstacle
+  function trySpawnHazard(d, qc, df, loop, prog) {
+    if (df < 0.03) return false;
+    const intro = loop > 0 ? 1 : Math.min(1, 0.25 + prog * 1.1);
+    if (R() >= Math.min(0.62, 0.22 + 0.32 * df) * intro) return false;
+    let kind = pickW(loop > 0 && R() < Math.min(0.45, 0.2 + 0.12 * loop) ? HZ_MIX : HZ_BY_D[d]);
+    if (kind === 'storm' && !stormFits(qc)) kind = 'debris';
+    return makeHazard(kind, qc, df);
+  }
+  function stormFits(q) {
+    if (nearHz('storm', q, 900)) return false;
+    const idx = Math.floor(q / L), into = q - idx * L;
+    for (const arm of [1050, 2250]) if (into < arm + 40 && into + 560 > arm - 200) return false; // keep the statue arms out of the dust
+    return into + 560 < L - BL;
+  }
+  function makeHazard(kind, q, df) {
+    const hard = Math.min(1, Math.max(0, df - 0.6) / 0.8); // 0 early .. 1 by cycle 2
+    let h;
+    switch (kind) {
+      case 'drone': {
+        const n = df > 0.9 && chance(0.35 + 0.3 * hard) ? 2 : 1;
+        for (let k = 0; k < n; k++) {
+          h = hNew('drone', q + k * 26); h.x = rr(-8, 8); h.y = k ? rr(4, 10) : rr(13, 24); h.a = rr(4, 7 + 5 * hard); h.w = rr(0.45, 0.8); h.b = rr(0.7, 1.1);
+        }
+        break;
+      }
+      case 'swing': h = hNew('swing', q); h.y = rr(46, 56); h.a = rr(0.42, 0.55 + 0.1 * hard); h.w = rr(1.0, 1.3 + 0.3 * hard); h.b = 30; break;
+      case 'drop': h = hNew('drop', q); h.y = pick([1, 7, 13, 19, 24]) + rr(-1, 1); break;
+      case 'flame': {
+        const two = df > 0.6 && chance(0.3 + 0.4 * hard), s0 = sgn();
+        for (let k = 0; k < (two ? 2 : 1); k++) {
+          h = hNew('flame', q + k * 14); h.s = k ? -s0 : s0; h.x = h.s * (LX + 5); h.y = k ? rr(0, 12) + 0 : rr(8, 24); h.a = rr(20, 24 + 3 * hard); h.ph = R() * 3.6;
+          solid(P.cyl, h.q, h.x, (GY + AMAX + 14) / 2, 1.8, AMAX + 14 - GY, 1.8, 0x1c1714);
+          glow(h.q, h.x, AMAX + 15, 0xc9584a, 4, 1.6, 1.1);
+        }
+        if (two && Math.abs(HZ[HZ.length - 1].y - HZ[HZ.length - 2].y) < 7) HZ[HZ.length - 1].y = HZ[HZ.length - 2].y > 12 ? rr(-2, 4) : rr(20, 26);
+        break;
+      }
+      case 'steam': {
+        h = hNew('steam', q); h.x = rr(-12, 12);
+        for (let k = 0; k < 6; k++) steam(q + rr(-3, 3), h.x + rr(-2.5, 2.5), AMIN - 14 + k * 3, 0x8f9a9e, rr(12, 17), 0.3, 6, false);
+        for (let k = 0; k < 3; k++) steam(q + rr(-4, 4), h.x + rr(-3, 3), AMIN + 8 + k * 6, 0x9e8a76, 22, 0.16, 4, false);
+        solid(P.box, q, h.x, AMIN - 12, 9, 2, 9, 0x16110e);
+        break;
+      }
+      case 'laser': h = hNew('laser', q); h.s = chance(0.55) ? 0 : 1; h.a = h.s === 0 ? rr(AMIN + 4, AMAX - 8) : rr(-11, 11); h.b = h.s === 0 ? 6.2 : 7.4; h.w = rr(2.6, 3.2) - 0.4 * hard; h.ph = R() * 3; break;
+      case 'shutter': h = hNew('shutter', q); h.a = 4 + 5 * hard + rr(0, 2); h.w = rr(0.9, 1.25); h.b = 11 - 2 * hard; break;
+      case 'storm': {
+        const len = rr(380, 520); h = hNew('storm', q, q + len); h.a = Math.min(3, 1.7 + 0.5 * hard + (df > 1.3 ? 0.5 : 0)); h.b = 10 + 7 * hard;
+        for (let x = -60; x <= 60; x += 10) steam(q + rr(-6, 6), x + rr(-4, 4), rr(-14, 36), 0xd08a4a, rr(34, 52), 0.14, 2, true); // the storm front
+        for (let k = 0; k < 18; k++) steam(q + rr(30, len), rr(-50, 50), rr(-10, 34), 0xc07a3a, rr(30, 46), 0.1, 2, true);
+        const nd = Math.floor(len / 170); // debris inside the storm, well spaced
+        for (let k = 1; k <= nd; k++) makeHazard('debris', q + k * (len / (nd + 1)), df);
+        nextObs = Math.max(nextObs, q + len + 80);
+        break;
+      }
+      case 'debris': {
+        h = hNew('debris', q); const slots = [-13.5, -4.5, 4.5, 13.5]; for (let i = 3; i > 0; i--) { const j = (R() * (i + 1)) | 0; [slots[i], slots[j]] = [slots[j], slots[i]]; }
+        h.n = df > 1.05 && chance(0.5) ? 3 : df > 0.6 && chance(0.6) ? 2 : 1;
+        for (let k = 0; k < h.n; k++) { h.xs[k] = slots[k] + rr(-1.5, 1.5); h.ys[k] = rr(3.6, 4.8); h.ts[k] = -1; }
+        h.a = rr(0, 0.25);
+        break;
+      }
+      case 'lightning': {
+        h = hNew('lightning', q); h.n = df > 1.1 && chance(0.5) ? 2 : 1; h.a = 3.6 + 0.6 * hard;
+        h.xs[0] = rr(-13, 13); if (h.n > 1) h.xs[1] = h.xs[0] > 0 ? h.xs[0] - rr(11, 16) : h.xs[0] + rr(11, 16);
+        break;
+      }
+      case 'spray': h = hNew('spray', q); h.x = rr(1, 9); h.b = 11 + 6 * hard; break;
+      default: return false;
+    }
+    return true;
+  }
+
+  // per frame: animate, draw, publish lethal boxes, warn/active events, siren drain, pushes, fog
+  function updateHazards(dt) {
+    nS = nA = nC = nG = 0; nHB = 0;
+    const t = core.time, pl = NR.player, pp = pl && pl.pos, playing = core.state === 'PLAY';
+    const v = Math.max(30, (core.speed || 60) + (pl && pl.boosting ? C.BOOST_ADD : 0));
+    fogD = scene.fog ? scene.fog.density : 0.002;
+    let fogTarget = 0;
+    const lim = travel - BEHIND;
+    for (let i = HZ.length - 1; i >= 0; i--) if (HZ[i].end < lim) { HZ_FREE.push(HZ[i]); HZ[i] = HZ[HZ.length - 1]; HZ.pop(); }
+    for (let i = 0; i < HZ.length; i++) {
+      const h = HZ[i], dz = h.q - travel, ta = dz / v, near = dz < 420 && dz > -20;
+      switch (h.kind) {
+        case 'drone': {
+          const x = h.x + h.a * Math.sin(t * h.w + h.ph), y = h.y + 0.6 * Math.sin(t * 2.1 + h.ph), q = h.q, lb = Math.sin(t * 7 + h.ph) > 0;
+          hS(x, y, q, 3.0, 0.7, 2.3, HC.steel2, 1); hS(x - 1.95, y - 0.12, q, 0.9, 0.55, 2.8, HC.steel, 1); hS(x + 1.95, y - 0.12, q, 0.9, 0.55, 2.8, HC.steel, 1);
+          hA(x - 0.55, y + 0.45, q - 0.3, 0.9, 0.22, 0.4, lb ? HC.red : HC.dred, lb ? 2.2 : 0.5); hA(x + 0.55, y + 0.45, q - 0.3, 0.9, 0.22, 0.4, lb ? HC.tealD : HC.teal, lb ? 0.5 : 2.2);
+          hG(x - 0.55, y + 0.6, q - 0.4, lb ? HC.red : HC.teal, lb ? 1.8 : 0.4, 5); hG(x + 0.55, y + 0.6, q - 0.4, lb ? HC.teal : HC.red, lb ? 0.4 : 1.8, 5);
+          for (const sx of [-1.95, 1.95]) hG(x + sx, y - 0.3, q - 1.5, HC.amber, 1.1, 2.6);
+          hG(x, y - 0.5, q - 1.2, HC.cream, 1.6, 4.5);
+          // searchlight: from the belly, down and toward the player, sweeping across the corridor
+          const sw = Math.sin(t * h.b + h.ph * 1.7), dx = sw * 0.62, dy = -0.62, dzw = 1, len = 34, rad = 7.5;
+          hC(x, y - 0.5, q, dx, dy, dzw, len, rad, HC.grey, 0.32); hC(x, y - 0.5, q, dx, dy, dzw, len * 0.9, rad * 0.45, HC.cream, 0.22);
+          _d.set(dx, dy, dzw).normalize(); hG(x + _d.x * len, y - 0.5 + _d.y * len, q - _d.z * len, HC.cream, 0.5, 26);
+          hBox(x - 2.4, x + 2.4, y - 0.65, y + 0.6, q - 1.4, q + 1.4, 'drone');
+          if (playing && near && !h.warned && ta < 2.5) { h.warned = true; hEmit('drone', 'warn', x, y, q); }
+          if (playing && pp) { // inside the cone: the siren drains
+            _w.set(pp.x - x, pp.y - (y - 0.5), (pp.z || 0) - (travel - q)); // drone world z = travel - q
+            const along = _w.dot(_d), inC = along > 0 && along < len && _w.addScaledVector(_d, -along).length() < rad * along / len + 1.2;
+            if (inC) { if (pl.drainSiren) pl.drainSiren(0.4 * dt); if (!h.inside) hEmit('spotted', 'active', pp.x, pp.y, travel); }
+            h.inside = inC;
+          }
+          break;
+        }
+        case 'swing': {
+          const th = h.a * Math.sin(t * h.w + h.ph), Lr = h.b, cx = Lr * Math.sin(th), cy = h.y - Lr * Math.cos(th), q = h.q;
+          hS(0, h.y + 1.2, q, 60, 1.6, 2.2, HC.steel, 1); hA(0, h.y, q - 1.15, 60, 0.3, 0.1, HC.amb2, 1.3);
+          const c = Math.cos(th), s = Math.sin(th), rot = (ox, oy) => [cx + ox * c - oy * s, cy + ox * s + oy * c];
+          for (const ox of [-4.5, 4.5]) { const [bx, by] = rot(ox, 3), tx = ox * 0.4; hS((tx + bx) / 2, (h.y + by) / 2, q, 0.2, Math.hypot(bx - tx, h.y - by), 0.2, HC.steel, 1, Math.atan2(bx - tx, h.y - by)); }
+          hA(cx, cy, q + 0.8, 13.8, 6.8, 0.2, HC.amber, 1.5, th);
+          hS(cx, cy, q, 13, 6, 1.4, HC.dark, 1, th);
+          for (const [oy, col, k] of [[1.6, HC.cream, 1.4], [0, HC.red, 1.6], [-1.6, HC.teal, 1.2]]) { const [px, py] = rot(0, oy); hA(px, py, q - 0.75, 9.5 - Math.abs(oy) * 1.2, 0.55, 0.1, col, k * (0.75 + 0.25 * Math.sin(t * 9 + oy)), th); }
+          const bl = blink(3, t); for (const ox of [-6.2, 6.2]) { const [px, py] = rot(ox, -3.3); hG(px, py, q - 0.9, HC.red, 1.8 * bl, 4.5); }
+          hG(cx, cy, q - 2, HC.amber, 0.25, 26);
+          const hx = (6.5 * Math.abs(c) + 3 * Math.abs(s)) * 0.88, hy = (6.5 * Math.abs(s) + 3 * Math.abs(c)) * 0.88;
+          hBox(cx - hx, cx + hx, cy - hy, cy + hy, q - 0.9, q + 0.9, 'swing');
+          if (playing && near && !h.warned && ta < 2.5) { h.warned = true; hEmit('swing', 'warn', cx, cy, q); }
+          break;
+        }
+        case 'drop': {
+          const q = h.q, top = AMAX + 24, k = playing ? sstep(1.75, 1.3, ta) : 0, y = top + (h.y - top) * (k * k) + (k >= 1 ? 0 : 0);
+          const armed = playing && ta < 3.2, bl = armed ? blink(4 + 6 * sstep(3.2, 1.3, ta), t) : 0.5;
+          hS(0, y, q, 70, 2.4, 3, HC.steel, 1); hA(0, y - 1.0, q - 1.6, 70, 0.32, 0.1, HC.amb2, 1.6); hA(0, y + 0.95, q - 1.6, 70, 0.24, 0.1, HC.amb2, 1.0);
+          for (const sx of [-1, 1]) { hS(sx * (LX + 4), (y + top + 12) / 2, q, 1.4, top + 12 - y, 1.4, HC.steel2, 1); hS(sx * (LX + 4), h.y, q, 2.2, 0.6, 2.2, HC.steel2, 1); }
+          for (let x = -LX; x <= LX; x += 6) hG(x, y - 1.6, q - 1.6, HC.red, (armed ? 1.8 : 0.7) * bl, 3.4);
+          // target marker: where the beam will stop, lit for the whole approach
+          if (k < 1) { hA(0, h.y, q, 2 * (LX + 4), 0.12, 0.12, HC.red, 0.55 + 0.9 * bl * (armed ? 1 : 0.3)); for (const sx of [-1, 1]) hG(sx * (LX + 4), h.y, q - 1.5, HC.red, 1.5 * bl, 5); }
+          if (y - 1.2 < AMAX + 2) hBox(-95, 95, y - 1.25, y + 1.25, q - 1.6, q + 1.6, 'drop');
+          if (armed && near && !h.warned) { h.warned = true; hEmit('drop', 'warn', 0, h.y, q); }
+          if (playing && k > 0.05 && !h.act && near) { h.act = true; hEmit('drop', 'active', 0, y, q); }
+          break;
+        }
+        case 'flame': {
+          const q = h.q, T = 3.6, ph = ((t + h.ph) % T + T) % T, s = h.s, x0 = h.x, y = h.y;
+          const ramp = ph >= 0.6 && ph < 2.4 ? (ph - 0.6) / 1.8 : 0, burst = ph >= 2.4 && ph < 3.4, bk = burst ? Math.min(1, (ph - 2.4) / 0.12) * (ph > 3.2 ? (3.4 - ph) / 0.2 : 1) : 0;
+          hS(x0 - s * 1.6, y, q, 2.2, 2.6, 2.6, HC.steel2, 1); hA(x0 - s * 2.75, y, q, 0.2, 2.0, 2.0, HC.orange, 0.6 + 1.6 * ramp + (burst ? 1.4 : 0));
+          hG(x0 - s * 3, y, q - 1.3, burst ? HC.cream : HC.orange, 0.5 + 2.2 * ramp * (0.7 + 0.3 * Math.sin(t * (12 + 30 * ramp))) + (burst ? 2 : 0), 3 + 9 * ramp + (burst ? 12 : 0));
+          hG(x0 - s * 3, y + 1.8, q - 1.4, HC.red, 1.6 * blink(1.5 + 4 * ramp, t), 3);
+          if (!burst && ramp > 0) hC(x0 - s * 2.8, y, q, -s, 0, 0, 1.5 + 3.5 * ramp, 0.6 + 0.5 * ramp, HC.orange, 0.8 + ramp);
+          if (burst) {
+            const len = h.a * bk, fl = 0.85 + 0.15 * Math.sin(t * 37 + i);
+            hC(x0 - s * 2.8, y, q, -s, 0.02, 0, len * fl, 2.6, HC.orange, 2.2); hC(x0 - s * 2.8, y, q, -s, 0, 0, len * 0.75 * fl, 1.2, HC.cream, 1.8);
+            for (let k = 1; k <= 6; k++) hG(x0 - s * (2.8 + len * k / 6.5), y + Math.sin(t * 20 + k) * 0.5, q - 0.5, k < 3 ? HC.cream : HC.orange, 1.6 - k * 0.15, 8 + k * 2.2);
+            if (bk > 0.6) hBox(Math.min(x0 - s * 2.8, x0 - s * (2.8 + len)), Math.max(x0 - s * 2.8, x0 - s * (2.8 + len)), y - 2.1, y + 2.1, q - 2.1, q + 2.1, 'flame');
+          }
+          if (playing && dz > 0 && dz < 380) {
+            if (ramp > 0 && !h.warned) { h.warned = true; h.act = false; hEmit('flame', 'warn', x0, y, q); }
+            if (burst && !h.act) { h.act = true; h.warned = false; hEmit('flame', 'active', x0, y, q); }
+          }
+          break;
+        }
+        case 'steam': {
+          const q = h.q;
+          hA(h.x, AMIN - 10.9, q, 8, 0.2, 8, HC.amber, 0.5 + 0.2 * Math.sin(t * 3 + h.ph));
+          for (let k = 0; k < 7; k++) { const f = (t * 0.35 + k / 7 + h.ph) % 1; hG(h.x + Math.sin(k * 2.3 + t) * 2.5, AMIN - 10 + f * 44, q + Math.cos(k * 1.7) * 2, HC.grey, 0.22 * Math.sin(f * 3.14), 20 + f * 18); }
+          if (pp && Math.abs(pp.x - h.x) < 5.5 && Math.abs(dz) < 8) { fogTarget = Math.max(fogTarget, 2.4); if (!h.inside && playing) hEmit('steam', 'active', h.x, pp.y, q); h.inside = true; } else h.inside = false;
+          break;
+        }
+        case 'laser': {
+          const q = h.q, T = 2 * h.w + 0.4, ph = ((t + h.ph) % T + T) % T, off = ph < h.w * 0.8, flick = !off && ph < h.w * 0.8 + 0.45, on = !off && !flick;
+          const fx = LX + 2.5, ylo = AMIN - 5, yhi = AMAX + 5, vert = h.s === 1;
+          for (const sx of [-1, 1]) { hS(sx * fx, (ylo + yhi) / 2, q, 1.4, yhi - ylo, 1.4, HC.steel2, 1); hA(sx * (fx - 0.75), (ylo + yhi) / 2, q - 0.75, 0.3, yhi - ylo, 0.1, HC.amb2, 1.3); }
+          hA(0, yhi - 0.1, q - 0.75, 2 * fx, 0.3, 0.1, HC.amb2, 1.3); hA(0, ylo + 0.1, q - 0.75, 2 * fx, 0.3, 0.1, HC.amb2, 1.0);
+          hS(0, yhi + 0.7, q, 2 * fx + 1.4, 1.4, 1.4, HC.steel2, 1); hS(0, ylo - 0.7, q, 2 * fx + 1.4, 1.4, 1.4, HC.steel2, 1);
+          const k = on ? 2.0 + 0.4 * Math.sin(t * 40 + i) : flick ? (Math.sin(t * 60) > 0 ? 1.1 : 0.2) : 0.3;
+          const g0 = h.a - h.b / 2, g1 = h.a + h.b / 2;
+          if (!vert) {
+            for (let y = AMIN - 3.5; y <= AMAX + 3.5; y += 1.5) if (y < g0 || y > g1) hA(0, y, q, 2 * fx - 1.2, 0.34, 0.2, HC.red, k);
+            if (on) { hA(0, (ylo + g0) / 2, q + 0.4, 2 * fx, g0 - ylo, 0.1, HC.dred, 0.3); hA(0, (g1 + yhi) / 2, q + 0.4, 2 * fx, yhi - g1, 0.1, HC.dred, 0.3); }
+            for (const sx of [-1, 1]) for (const gy of [g0, g1]) hG(sx * (fx - 0.9), gy, q - 1, HC.white, 1.8, 7);
+            for (const sx of [-1, 1]) hA(sx * (fx - 0.8), h.a, q - 0.75, 0.3, h.b - 0.4, 0.1, HC.white, 0.9);
+            if (on) { hBox(-fx, fx, ylo, g0 + 0.1, q - 0.4, q + 0.4, 'laser'); hBox(-fx, fx, g1 - 0.1, yhi, q - 0.4, q + 0.4, 'laser'); }
+          } else {
+            for (let x = -fx + 1.4; x <= fx - 1.4; x += 2.2) if (x < g0 || x > g1) hA(x, (ylo + yhi) / 2, q, 0.36, yhi - ylo, 0.2, HC.red, k);
+            if (on) { hA((-fx + g0) / 2, (ylo + yhi) / 2, q + 0.4, g0 + fx, yhi - ylo, 0.1, HC.dred, 0.3); hA((g1 + fx) / 2, (ylo + yhi) / 2, q + 0.4, fx - g1, yhi - ylo, 0.1, HC.dred, 0.3); }
+            for (const gx of [g0, g1]) for (const yy of [ylo + 1, yhi - 1]) hG(gx, yy, q - 1, HC.white, 1.8, 7);
+            for (const gx of [g0, g1]) hA(gx, (ylo + yhi) / 2, q - 0.75, 0.12, yhi - ylo, 0.1, HC.white, 0.35);
+            if (on) { hBox(-fx, g0 + 0.1, ylo, yhi, q - 0.4, q + 0.4, 'laser'); hBox(g1 - 0.1, fx, ylo, yhi, q - 0.4, q + 0.4, 'laser'); }
+          }
+          if (playing && dz > 0 && dz < 380) {
+            if (flick && !h.warned) { h.warned = true; h.act = false; hEmit('laser', 'warn', 0, h.a, q); }
+            if (on && !h.act) { h.act = true; h.warned = false; hEmit('laser', 'active', 0, h.a, q); }
+          }
+          break;
+        }
+        case 'shutter': {
+          const q = h.q, k = playing ? sstep(2.3, 1.2, ta) : 0, gc = k * h.a * Math.sin(t * h.w + h.ph), hw = 27 + (h.b / 2 - 27) * k;
+          const ylo = AMIN - 10, yhi = AMAX + 10, yc = (ylo + yhi) / 2, H = yhi - ylo, armed = playing && ta < 4.0;
+          for (const sx of [-1, 1]) { hS(sx * 27.5, yc, q, 3, H + 4, 3.4, HC.steel2, 1); }
+          hS(0, yhi + 2.5, q, 58, 3, 3.4, HC.steel2, 1); hA(0, yhi + 0.9, q - 1.75, 52, 0.25, 0.1, HC.amb2, 1.2);
+          for (const sx of [-1, 1]) {
+            const e = gc + sx * hw, far = sx * 60, cx = (e + far) / 2, w = Math.abs(far - e);
+            hS(cx, yc, q, w, H, 1.5, HC.steel, 1);
+            hA(e - sx * 0.35, yc, q - 0.8, 0.5, H, 0.1, HC.amber, 1.3 + (armed ? 0.6 * blink(3, t) : 0));
+            for (let y = ylo + 2; y < yhi - 1; y += 3.2) hA(e - sx * 2.2, y, q - 0.8, 3.2, 0.5, 0.08, HC.amb2, 0.7, sx * 0.75);
+            for (const yy of [AMIN - 1, (AMIN + AMAX) / 2, AMAX + 1]) hG(e - sx * 0.6, yy, q - 1.2, HC.white, 1.4, 4);
+          }
+          for (const sx of [-1, 1]) hG(sx * 27.5, yhi + 4.6, q - 1.8, HC.red, armed ? 2.2 * blink(2.5, t) : 0.6, 6);
+          if (hw < LX + 2) for (const sx of [-1, 1]) { const e = gc + sx * hw; hBox(sx < 0 ? -95 : e, sx < 0 ? e : 95, ylo, yhi, q - 0.75, q + 0.75, 'shutter'); }
+          if (armed && near && !h.warned) { h.warned = true; hEmit('shutter', 'warn', gc, yc, q); }
+          if (playing && k > 0.02 && !h.act && near) { h.act = true; hEmit('shutter', 'active', gc, yc, q); }
+          break;
+        }
+        case 'storm': {
+          const into = travel - h.q, left = h.end - travel, inZone = into > 0 && left > 0;
+          if (inZone) {
+            const k = Math.min(1, into / 90, left / 90); fogTarget = Math.max(fogTarget, h.a * k);
+            // gusts: a dust curtain sweeps in from one side for 1.6 s, then the wind shoves the car
+            h.cool -= dt;
+            if (h.st === 0 && h.cool <= 0 && left > 120 && playing) { h.st = 1; h.t0 = t; h.s = sgn(); hEmit('dust', 'warn', -h.s * 20, pp ? pp.y : 8, travel - 30); }
+            if (h.st === 1 && t - h.t0 > 1.6) { h.st = 2; h.t0 = t; if (pl && pl.push && pl.alive) pl.push(h.s * h.b, 0); hEmit('dust', 'active', 0, pp ? pp.y : 8, travel); }
+            if (h.st === 2 && t - h.t0 > 0.9) { h.st = 0; h.cool = rr(1.4, 3.2); }
+            const wind = h.st === 1 ? sstep(0, 1.6, t - h.t0) : h.st === 2 ? 1 : 0, py = pp ? pp.y : 8;
+            for (let k2 = 0; k2 < 90; k2++) { // drifting grit around the car, faster and denser in a gust
+              const sd = k2 * 7.31, fz = (sd * 13.7 + t * (0.7 + wind * 0.6)) % 1, dzp = 4 + fz * 120;
+              const fx = ((sd * 3.17 + t * (0.05 + 0.5 * wind) * h.s) % 1 + 1) % 1;
+              hG(-44 + fx * 88, py - 14 + ((sd * 5.3) % 1) * 30, travel + dzp, HC.dust, (0.18 + 0.4 * wind) * Math.sin(fz * 3.14), 3 + 4 * wind);
+            }
+            if (h.st === 1) { const f = sstep(0, 1.6, t - h.t0); for (let k2 = 0; k2 < 14; k2++) hG(-h.s * (60 - f * 50) + Math.sin(k2 * 2.1) * 4, py - 12 + k2 * 2.2, travel + 10 + k2 * 6, HC.dust, 0.16 * f, 26); }
+          } else if (into > -600 && into <= 0) hG(0, 10, h.q + 10, HC.dust, 0.25, 160);
+          break;
+        }
+        case 'debris': {
+          const q = h.q, armed = playing && ta < 3.2, top = AMAX + 26;
+          for (let k = 0; k < h.n; k++) {
+            const x = h.xs[k], sz = h.ys[k];
+            if (playing && h.ts[k] < 0 && ta < 1.38 + k * 0.06 + h.a) h.ts[k] = t;
+            const ft = h.ts[k] >= 0 ? t - h.ts[k] : -1, y = ft < 0 ? top + 0.4 * Math.sin(t * 17 + k) * (armed ? 1 : 0) : top - 27.5 * ft * ft;
+            const bl = armed ? blink(3 + 5 * sstep(3.2, 0.8, ta), t) : 0.35;
+            if (y > GY + 2) { hS(x, y, q, sz, sz * 0.8, sz, HC.rock, 1.3, t * 2 + k, t * 1.3); hS(x + 0.8, y + 0.6, q - 0.4, sz * 0.6, sz * 0.6, sz * 0.6, HC.rust, 1.2, -t * 2.5, 0.4); }
+            if (ft < 0 || y > AMIN - 2) {
+              hA(x, (AMIN - 3 + top) / 2, q, 0.22, top - AMIN + 3, 0.22, HC.red, 0.25 + (armed ? 0.75 : 0) * bl);
+              for (let j = 0; j < 14; j++) { const a = j / 14 * 6.2832; hG(x + Math.cos(a) * 3.4, AMIN - 3, q + Math.sin(a) * 3.4, HC.red, (0.6 + 1.2 * (armed ? 1 : 0)) * bl, 3); }
+              hG(x, top + 2, q - 1, HC.amber, 0.6 + (armed ? 0.6 * bl : 0), 10);
+            }
+            if (ft >= 0 && y > AMIN - 8 && y < AMAX + 6) hBox(x - sz * 0.45, x + sz * 0.45, y - sz * 0.4, y + sz * 0.4, q - sz * 0.45, q + sz * 0.45, 'debris');
+            if (ft > 0 && y < AMIN - 2 && y > GY) for (let j = 0; j < 6; j++) hG(x + Math.sin(j * 1.9) * 4, AMIN - 4 + j * 0.8, q + Math.cos(j * 2.3) * 3, HC.dust, 0.6, 14);
+          }
+          if (armed && near && !h.warned) { h.warned = true; hEmit('debris', 'warn', h.xs[0], top, q); }
+          if (playing && h.ts[0] >= 0 && !h.act && near) { h.act = true; hEmit('debris', 'active', h.xs[0], top, q); }
+          break;
+        }
+        case 'lightning': {
+          const q = h.q, armed = playing && ta < 2.9, r = h.a, yb = AMIN - 1.5;
+          for (let k = 0; k < h.n; k++) {
+            const x = h.xs[k], struck = h.ts[k] >= 0, life = struck ? t - h.ts[k] : -1;
+            if (!struck || life < 0.6) {
+              const kk = armed ? 1 - Math.max(0, ta) / 2.9 : 0, bl = armed ? blink(2 + 9 * kk, t) : 1, col = kk > 0.65 ? HC.white : HC.red;
+              for (let j = 0; j < 18; j++) { const a = j / 18 * 6.2832 + t * 0.6; hG(x + Math.cos(a) * r, yb, q + Math.sin(a) * r, armed ? col : HC.tealD, armed ? (0.9 + 1.4 * kk) * bl : 0.7, 3.2); }
+              hA(x, yb + 18, q, 0.14, 40, 0.14, armed ? col : HC.tealD, armed ? 0.25 + 0.5 * kk * bl : 0.12);
+              hG(x, yb, q, col, armed ? 0.45 * bl : 0.2, r * 1.6);
+            }
+            if (playing && !struck && ta <= 0.1 + k * 0.04 && dz > -10) {
+              h.ts[k] = t; flashSky = 1; if (core.flash) core.flash(0xd8e0e8, 0.12, 0.35); NR.bus.emit('lightning', {});
+              hEmit('lightning', 'active', x, yb, q, { radius: r });
+            }
+            if (struck && life < 0.22) {
+              for (let j = 0; j < 8; j++) { const y0 = yb + j * 16, jx = Math.sin(h.ph * 9 + j * 2.7) * 2.2; hA(x + jx * 0.5, y0 + 8, q, 0.5, 16.5, 0.5, HC.white, 2.4 * (1 - life / 0.22), jx * 0.06); }
+              hG(x, yb + 2, q - 1, HC.white, 2.5, 30); hG(x, yb + 14, q - 1, HC.teal, 1.2, 50);
+              hBox(x - r * 0.85, x + r * 0.85, yb - 3, 400, q - r * 0.85, q + r * 0.85, 'lightning');
+            }
+          }
+          if (armed && near && !h.warned) { h.warned = true; for (let k = 0; k < h.n; k++) hEmit('lightning', 'warn', h.xs[k], yb, q, { radius: r, seconds: Math.max(1.2, ta - 0.1) }); }
+          break;
+        }
+        case 'spray': {
+          const q = h.q, armed = playing && ta < 2.6, x0 = h.x, x1 = LX + 10;
+          if (playing && h.st === 0 && ta < 1.0) { h.st = 1; h.t0 = t; if (near) hEmit('spray', 'active', (x0 + x1) / 2, AMIN, q); }
+          const et = h.st ? t - h.t0 : -1, up = et >= 0 && et < 1.7, hgt = up ? (AMAX + 6 - AMIN + 10) * Math.min(1, et / 0.4) * (et > 1.3 ? (1.7 - et) / 0.4 : 1) : 0;
+          // swell: foam boils at the base along the plume line
+          for (let j = 0; j < 10; j++) { const x = x0 + (x1 - x0) * (j / 9), b = armed ? 0.6 + 0.6 * Math.sin(t * 8 + j * 1.3) : 0.25; hG(x, AMIN - 8 + (armed ? Math.abs(Math.sin(t * 6 + j)) * 2 : 0), q + Math.sin(j * 2.1) * 2, HC.foam, b, 7); }
+          if (armed && !up) hA((x0 + x1) / 2, AMIN - 8, q, x1 - x0, 0.3, 4, HC.teal, 0.5 + 0.5 * blink(3, t));
+          if (up) {
+            hC((x0 + x1) / 2, AMIN - 10, q, 0, 1, 0, hgt * 1.05, (x1 - x0) * 0.42, HC.foam, 0.6);
+            for (let j = 0; j < 40; j++) { const f = (j * 0.618 + et * 1.4) % 1, x = x0 + (x1 - x0) * ((j * 0.37) % 1); hG(x, AMIN - 10 + f * hgt, q + Math.sin(j * 3.1) * 3, j % 3 ? HC.foam : HC.white, 0.55 * (1 - f * 0.6), 6 + f * 10); }
+            if (pp && pl.alive && !h.inside && pp.x > x0 - 1.4 && Math.abs(dz) < 6 && pp.y < AMIN - 10 + hgt) { h.inside = true; if (pl.push) pl.push(-h.b, 3); hEmit('spray', 'active', pp.x, pp.y, travel); }
+          }
+          if (armed && near && !h.warned) { h.warned = true; hEmit('spray', 'warn', (x0 + x1) / 2, AMIN, q); }
+          break;
+        }
+      }
+    }
+    // fog for steam / dust storms: eased, always back to 0
+    if (!playing) fogTarget = 0;
+    fogT += (fogTarget - fogT) * (1 - Math.exp(-dt * (fogTarget > fogT ? 2.2 : 1.4)));
+    if (fogT < 0.002 && fogTarget === 0) fogT = 0;
+    core.fogExtra = fogT;
+    // upload the dynamic batches
+    for (const [m, n] of [[dS, nS], [dA, nA], [dC, nC]]) {
+      m.count = n; m.visible = n > 0; if (!n) continue;
+      m.instanceMatrix.clearUpdateRanges(); m.instanceMatrix.addUpdateRange(0, n * 16); m.instanceMatrix.needsUpdate = true;
+      m.instanceColor.clearUpdateRanges(); m.instanceColor.addUpdateRange(0, n * 3); m.instanceColor.needsUpdate = true;
+    }
+    const ga = dG.geometry.attributes; dG.geometry.setDrawRange(0, nG); dG.visible = nG > 0;
+    if (nG) for (const a of [ga.position, ga.aCol, ga.aMode]) { a.clearUpdateRanges(); a.addUpdateRange(0, nG * 3); a.needsUpdate = true; }
+  }
+  function clearHazards() { while (HZ.length) HZ_FREE.push(HZ.pop()); nHB = 0; }
+
   // ------------------------------------------------------------------ streaming
   function districtAt(s) {
     if (!obstaclesOn) return { d: titleD, loop: 0, into: 1e9, idx: 0 };
@@ -639,12 +1018,13 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     }
     // obstacles
     if (obstaclesOn && q >= nextObs && q > 380) {
-      const loopK = z.loop, prog = Math.min(1, z.into / L);
-      const p = Math.min(0.92, 0.5 + 0.12 * loopK + 0.18 * prog);
+      const loopK = z.loop, prog = Math.min(1, z.into / L), df = diffAt(q);
+      const p = Math.min(0.95, 0.5 + 0.22 * Math.min(df, 2) + 0.1 * prog);
       const spd = (core ? core.speed : 60) + C.BOOST_ADD;
-      const spacing = Math.max(spd * 1.2, 300 - loopK * 30 - prog * 60, 130);
+      const spacing = Math.max(spd * 1.2, 300 - 85 * Math.min(df, 2) - 40 * prog, 120);
       if (R() < p) {
         const qc = q + 20;
+        if (trySpawnHazard(d, qc, df, loopK, prog)) { nextObs = Math.max(nextObs, q + spacing + 30); return; }
         if (d === CANYON) { const k = R(); if (k < 0.5) gantry(qc, pick([-0.5, 7, 14, 21]) + rr(-1, 1), 0xd9953f, true); else if (k < 0.8) walkway(qc, rr(-1.5, 4)); else { walkway(qc, rr(-1.5, 2)); gantry(qc + 40, rr(20, 24), 0xd9953f, false); } }
         else if (d === STACKS) pipes(qc, R() < 0.45);
         else if (d === ARC) { if (R() < 0.62) pylons(qc); else lightRail(qc); }
@@ -658,7 +1038,7 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
   function rebuild(at) {
     R = NR.rng(((at || 0) * 13 + 4747 + ((Math.random() * 1e6) | 0)) >>> 0);
     for (const p of POOLS) p.clear();
-    obs.head = obs.tail = 0;
+    obs.head = obs.tail = 0; clearHazards();
     for (const b of beams) { b.visible = false; b.userData.key = -1e9; }
     travel = at || 0; base = travel; nextS = travel - BEHIND - SLICE; nextObs = travel + 380;
     root.position.z = 0;
@@ -762,7 +1142,8 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
       obs.recycle(lim - 10);
       for (let k = 0; k < beams.length; k++) if (beams[k].visible && beams[k].userData.key < lim) beams[k].visible = false;
       animate(dt);
-      for (let k = 0; k < POOLS.length; k++) POOLS[k].flush();
+      updateHazards(dt);
+      for (let k = 0; k < POOLS.length; k++) { const p = POOLS[k]; p.flush(); p.mesh.visible = p.head > p.tail; } // empty pools cost no draw call
     },
     collide(box) {
       const r = RES; r.hit = false; r.kind = ''; r.normal.set(0, 0, 0);
@@ -776,6 +1157,16 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
         if (pz <= px && pz <= py) r.normal.set(0, 0, 1);
         else if (px < py) r.normal.set(bx0 + bx1 > OB[o] + OB[o + 1] ? 1 : -1, 0, 0);
         else r.normal.set(0, by0 + by1 > OB[o + 2] + OB[o + 3] ? 1 : -1, 0);
+        return r;
+      }
+      for (let i = 0; i < nHB; i++) { // live hazards (rebuilt every frame by updateHazards)
+        const o = i * 6, z0 = travel - HB[o + 5], z1 = travel - HB[o + 4];
+        if (z1 < bz0 || z0 > bz1 || HB[o + 1] < bx0 || HB[o] > bx1 || HB[o + 3] < by0 || HB[o + 2] > by1) continue;
+        const px = Math.min(bx1 - HB[o], HB[o + 1] - bx0), py = Math.min(by1 - HB[o + 2], HB[o + 3] - by0), pz = Math.min(bz1 - z0, z1 - bz0);
+        r.hit = true; r.kind = HBK[i];
+        if (pz <= px && pz <= py) r.normal.set(0, 0, 1);
+        else if (px < py) r.normal.set(bx0 + bx1 > HB[o] + HB[o + 1] ? 1 : -1, 0, 0);
+        else r.normal.set(0, by0 + by1 > HB[o + 2] + HB[o + 3] ? 1 : -1, 0);
         return r;
       }
       return r;
@@ -792,6 +1183,12 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
       return { travel, base, obstacles: obs.head - obs.tail, pools: c, pyramid: pyr && pyr.visible, art: panoTex.map(t => !!(t && t.image && t.image.tagName === 'IMG')) };
     },
     districtAt(s) { const idx = Math.floor(Math.max(0, s) / L); return idx % ND; },
+    // hazards: live list, lethal boxes this frame, and a test helper that places one `ahead` metres in front of the car
+    hazards() { return HZ.map(h => ({ kind: h.kind, z: travel - h.q, zEnd: travel - h.end, x: h.x, y: h.y, n: h.n, warned: h.warned, act: h.act })); },
+    hazardBoxes() { const out = []; for (let i = 0; i < nHB; i++) { const o = i * 6; out.push({ kind: HBK[i], x0: HB[o], x1: HB[o + 1], y0: HB[o + 2], y1: HB[o + 3], z0: travel - HB[o + 5], z1: travel - HB[o + 4] }); } return out; },
+    spawnHazard(kind, ahead, df) { if (!core || !obstaclesOn) return false; return makeHazard(kind, travel + (ahead || 300), df === undefined ? (core.difficulty || 0) : df); },
+    clearHazards() { clearHazards(); },
+    HAZARD_KINDS: ['drone', 'swing', 'drop', 'flame', 'steam', 'laser', 'shutter', 'storm', 'debris', 'lightning', 'spray'],
   };
 
   // painted art: generated locally with the image model, downscaled JPEG. Replaced at build time by tests/world_art.py.

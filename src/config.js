@@ -1,4 +1,4 @@
-// NEON RAIN shared config: tuning, districts, palette, rng, event bus. Owned by the core; builders read only.
+// SKYRUNNER shared config: tuning, districts, palette, rng, event bus. Owned by the core; builders read only.
 window.NR = window.NR || {};
 NR.cfg = {
   RES: { high: [360, 640], low: [270, 480] },   // internal render size (portrait 9:16)

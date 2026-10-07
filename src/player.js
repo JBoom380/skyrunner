@@ -1,15 +1,31 @@
-// NEON RAIN player: the PATROL 47 cruiser. Flight, boost, siren, hits, crash. See SPEC.md "NR.player".
+// SKYRUNNER player: the PATROL 47 cruiser. Flight, boost, siren, roll, hits, crash. See SPEC.md "NR.player" + Addendum 2026-10-06.
 (function () {
   const C = NR.cfg;
   const SPARKS = 48;
   const START_Y = 8;
+  const ROLL_DUR = 0.45, ROLL_DUR_BOOST = 0.35, ROLL_SAFE = 0.3, ROLL_COOL = 1.0, ROLL_BUFFER = 0.15;
 
   let THREE, car, scene, glowTex, glows, sparks, sparkVel, sparkLife, sparkNext = 0;
   let boxObj, tmpN;
+  let rollDur = ROLL_DUR, rollDist = 0, rollDone = 0, rollAngle = 0, rollKind = 'spin', rollBuf = 0;
+  let pushX = 0, pushY = 0, pushVX = 0, pushVY = 0;
   let crashT = 0, crashV = 0, crashVy = 0, spinX = 0, spinZ = 0, sparkClock = 0, boostVis = 0, sirenFull = false;
 
   const P = NR.player = {
     pos: null, vel: null, bank: 0, pitch: 0, boosting: false, boostFuel: 1, siren: 0, hull: C.HULL, invuln: 0, alive: true, car: null,
+    rolling: false, rollT: 0, rollDir: { x: 0, y: 0 }, rollCooldown: 0,
+
+    // external impulse in m/s (wind gusts, wave spray); eased in, then decays
+    push(x, y) {
+      if (!P.alive || !isFinite(+x) || !isFinite(+y)) return;
+      pushX = clamp(pushX + +x, -40, 40); pushY = clamp(pushY + +y, -40, 40);
+    },
+
+    drainSiren(amount) {
+      if (!P.alive || !(amount > 0)) return;
+      P.siren = Math.max(0, P.siren - amount);
+      if (P.siren < 1) sirenFull = false;
+    },
 
     init(core) {
       THREE = core.THREE; scene = core.scene;
@@ -28,6 +44,8 @@
       P.pos.set(0, START_Y, 0); P.vel.set(0, 0, 0);
       P.bank = 0; P.pitch = 0; P.boosting = false; P.boostFuel = 1; P.siren = 0; sirenFull = false;
       P.hull = C.HULL; P.invuln = 0; P.alive = true; crashT = 0; boostVis = 0;
+      P.rolling = false; P.rollT = 0; P.rollDir.x = 0; P.rollDir.y = 0; P.rollCooldown = 0; rollAngle = 0; rollBuf = 0;
+      pushX = pushY = pushVX = pushVY = 0;
       if (car) { car.group.visible = true; car.group.rotation.set(0, 0, 0); car.group.position.copy(P.pos); car.setBoost(0); }
       if (sparks) for (let i = 0; i < SPARKS; i++) { sparkLife[i] = 0; sparks[i].visible = false; }
     },
@@ -61,7 +79,11 @@
     const k = 1 - Math.exp(-dt * 7);
     P.vel.x += (mx * C.STEER_SPEED - P.vel.x) * k;
     P.vel.y += (my * C.CLIMB_SPEED - P.vel.y) * k;
-    P.pos.x += P.vel.x * dt; P.pos.y += P.vel.y * dt;
+    // external pushes: ease toward the impulse, the impulse itself fades
+    const kp = 1 - Math.exp(-dt * 10), kd = Math.exp(-dt * 2.5);
+    pushVX += (pushX - pushVX) * kp; pushVY += (pushY - pushVY) * kp; pushX *= kd; pushY *= kd;
+    P.pos.x += (P.vel.x + pushVX) * dt; P.pos.y += (P.vel.y + pushVY) * dt;
+    roll(dt, inp, mx, my);
     // soft corridor walls
     if (P.pos.x < -C.LANE_X) { P.pos.x = -C.LANE_X; if (P.vel.x < 0) P.vel.x = 0; }
     if (P.pos.x > C.LANE_X) { P.pos.x = C.LANE_X; if (P.vel.x > 0) P.vel.x = 0; }
@@ -83,9 +105,9 @@
       NR.bus.emit('siren', {});
     }
 
-    // collisions
+    // collisions (none in the middle of a roll)
     if (P.invuln > 0) P.invuln = Math.max(0, P.invuln - dt);
-    else {
+    if (P.invuln <= 0 && !rollSafe()) {
       const b = P.box();
       let r = NR.world && typeof NR.world.collide === 'function' ? NR.world.collide(b) : null;
       if (!(r && r.hit)) r = NR.traffic && typeof NR.traffic.collide === 'function' ? NR.traffic.collide(b) : null;
@@ -97,12 +119,48 @@
     P.bank += (tb - P.bank) * Math.min(1, dt * 9);
     P.pitch += (P.vel.y / C.CLIMB_SPEED * 0.16 - P.pitch) * Math.min(1, dt * 8);
     const g = car.group;
-    car.setBank(P.bank);
-    g.rotation.x = P.pitch;
-    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1;
+    car.setBank(P.bank + (rollKind === 'barrel' ? rollAngle : 0));
+    g.rotation.x = P.pitch + (rollKind === 'loop' ? rollAngle : 0);
+    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1 + (rollKind === 'spin' ? rollAngle : 0);
     g.position.set(P.pos.x, P.pos.y + Math.sin(core.time * 2.3) * 0.12, P.pos.z);
     g.visible = P.invuln > 0 ? (Math.floor(P.invuln * 14) % 2 === 0) : true;
   }
+
+  // ---------- roll: barrel (left/right), loop (up/down), flat spin (centred) ----------
+  function roll(dt, inp, mx, my) {
+    if (P.rollCooldown > 0 && !P.rolling) P.rollCooldown = Math.max(0, P.rollCooldown - dt);
+    if (inp.roll) rollBuf = ROLL_BUFFER; else rollBuf = Math.max(0, rollBuf - dt);
+    if (rollBuf > 0 && !P.rolling && P.rollCooldown <= 0) {
+      rollBuf = 0;
+      // controls snaps the press direction into rollX/rollY (keys held at the press win); else snap the stick here
+      const hasDir = typeof inp.rollX === 'number' && typeof inp.rollY === 'number';
+      const rx = hasDir ? clamp(inp.rollX, -1, 1) : mx, ry = hasDir ? clamp(inp.rollY, -1, 1) : my;
+      const ax = Math.abs(rx), ay = Math.abs(ry), d = P.rollDir;
+      if (Math.max(ax, ay) < 0.3) { d.x = 0; d.y = 0; } else if (ax >= ay) { d.x = Math.sign(rx); d.y = 0; } else { d.x = 0; d.y = Math.sign(ry); }
+      const boost = !!P.boosting;
+      rollDur = boost ? ROLL_DUR_BOOST : ROLL_DUR;
+      rollDist = (d.y ? 5 : 6) * (boost ? 1.5 : 1) * (d.x || d.y ? 1 : 0);
+      rollKind = d.x ? 'barrel' : d.y ? 'loop' : 'spin';
+      P.rolling = true; P.rollT = 0; P.rollCooldown = ROLL_COOL; rollDone = 0;
+      NR.bus.emit('roll', { dir: { x: d.x, y: d.y }, kind: rollKind, boost });
+    }
+    if (!P.rolling) return;
+    P.rollT = Math.min(1, P.rollT + dt / rollDur);
+    const e = ease(P.rollT), step = (e - rollDone) * rollDist; rollDone = e;
+    P.pos.x += P.rollDir.x * step; P.pos.y += P.rollDir.y * step;
+    // barrel: right = -z (same sense as banking right); loop: up = nose up (+x); spin: turn left (+y)
+    const sgn = rollKind === 'barrel' ? -P.rollDir.x : rollKind === 'loop' ? P.rollDir.y : 1;
+    rollAngle = sgn * Math.PI * 2 * e;
+    if (P.rollT >= 1) { P.rolling = false; rollAngle = 0; }
+  }
+
+  function rollSafe() {
+    if (!P.rolling) return false;
+    const t = P.rollT * rollDur, a = (rollDur - ROLL_SAFE) / 2;
+    return t >= a && t <= a + ROLL_SAFE;
+  }
+
+  function ease(t) { return 0.5 - 0.5 * Math.cos(Math.PI * t); }
 
   function titleHover(dt, t) {
     P.pos.set(Math.sin(t * 0.35) * 1.2, START_Y + Math.sin(t * 0.7) * 0.4, 0);
@@ -130,7 +188,7 @@
   }
 
   function crash(core) {
-    P.alive = false; P.boosting = false; P.invuln = 0;
+    P.alive = false; P.boosting = false; P.invuln = 0; P.rolling = false; rollAngle = 0;
     crashT = 0; crashV = 28; crashVy = 4;
     spinX = (Math.random() - 0.5) * 3; spinZ = (P.vel.x >= 0 ? -1 : 1) * (5 + Math.random() * 3);
     car.group.visible = true;

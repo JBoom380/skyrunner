@@ -1,5 +1,7 @@
-// NEON RAIN traffic: flying hover cars in lanes, cargo haulers, ad/police blimps, near misses, siren clear.
+// SKYRUNNER traffic: flying hover cars in lanes, cargo haulers, ad/police blimps, near misses, siren clear.
 // NR.traffic = { init, update, reset, collide(box) -> {hit, kind, normal}, clearAhead(dist), cars, stats() }
+// Lane-changers (round 2): same-direction cars that cut one lane near the player after ~1 s of amber blinker;
+// share and count rise with core.difficulty. Emits `laneChange` {phase:'warn'|'swerve', pos, side, type}.
 // Four original car designs (WEDGE sedan, CAB van, DART twin-hull coupe, HAULER freighter) are merged
 // low-poly meshes drawn with InstancedMesh (2 draw calls per design). All head/tail light glows are one
 // additive Points draw call. Cars and glow slots are pooled; the update allocates nothing per frame.
@@ -251,19 +253,27 @@
     for (const m of [body, emi]) { m.frustumCulled = false; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.setColorAt(0, _col.setRGB(1, 1, 1)); m.instanceColor.setUsage(THREE.DynamicDrawUsage); scene.add(m); }
     const pool = [];
     for (let i = 0; i < poolSize; i++) pool.push({ type: name, def, active: false, dir: 1, x: 0, y: 0, z: 0, tx: 0, ty: 0, y0: 0, x0: 0, speed: 0, ph: 0, paint: 0,
-      minGap: 1e9, tracked: false, done: false, hit: false, clear: -1, side: 1, roll: 0, vx: 0, spin: 0, laneT: 0, blink: 0, pos: null });
+      minGap: 1e9, tracked: false, done: false, hit: false, clear: -1, side: 1, roll: 0, vx: 0, spin: 0, laneT: 0, blink: 0, pos: null,
+      lc: 0, lcT: 0, lcFrom: 0, lcTo: 0, lcSlack: 0, lcDur: 0.8, lcPos: null });
     T[name] = { def, body, emi, pool, n: 0 };
   }
   function freeCar(type) { for (const c of T[type].pool) if (!c.active) return c; return null; }
 
-  function level() {
+  function diff() { // core.difficulty (0 at start, 1 after three districts, +0.35 per cycle); older cores fall back to distance
     if (!core || core.state !== 'PLAY') return 0;
-    return Math.min(2.4, (core.dist || 0) / 5600 + (core.loop || 0) * 0.8);
+    if (typeof core.difficulty === 'number') return Math.max(0, core.difficulty);
+    return Math.min(1, (core.dist || 0) / 8400) + (core.loop || 0) * 0.35;
   }
+  function level() { return Math.min(2.6, diff() * 1.5); }
   function desired() {
     if (!core || core.state === 'TITLE') return 10;
-    return Math.min(40, 12 + Math.floor(level() * 11));
+    return Math.min(42, 12 + Math.floor(level() * 11));
   }
+  // lane-changers: chance a same-direction car cuts across a lane near the player; how many may do it at once
+  function lcChance() { const d = diff(); return d <= 0 ? 0.06 : Math.min(0.55, 0.08 + 0.26 * d); }
+  function lcMax() { return 1 + Math.min(2, Math.floor(diff() * 1.3)); }
+  const LC_BLINK = 1.05, LC_EVT = { phase: '', pos: null, side: 0, type: '' };
+  let lcActive = 0, lcCount = 0, lcAborts = 0;
 
   function spawn(zOverride) {
     const L = level(), title = !core || core.state !== 'PLAY';
@@ -294,12 +304,51 @@
       c.ph = rand() * 6.28; c.paint = type === 'cab' && rand() < 0.6 ? -1 - ((rand() * TAXI_PAINT.length) | 0) : (rand() * PAINT.length) | 0;
       c.minGap = 1e9; c.tracked = false; c.done = false; c.hit = false; c.clear = -1; c.roll = 0; c.vx = 0; c.spin = 0;
       c.laneT = 2 + rand() * 6; c.blink = 0;
+      c.lc = (!title && type !== 'hauler' && dir > 0 && rand() < lcChance()) ? 1 : 0; c.lcT = 0; c.lcFrom = x; c.lcTo = x; c.lcSlack = 0.15 + rand() * 0.55;
       cars.push(c);
       return true;
     }
     return false;
   }
   function kill(i) { const c = cars[i]; c.active = false; cars[i] = cars[cars.length - 1]; cars.length--; }
+
+  // A planned lane-changer starts its blinker when the player will reach it in LC_BLINK + cut time + slack seconds,
+  // so the blinker always shows ~1 s before the car moves and the cut ends before the car is beside the player.
+  function laneFree(car, x) {
+    for (let j = 0; j < cars.length; j++) {
+      const o = cars[j]; if (o === car || o.clear >= 0) continue;
+      if (Math.abs(o.z - car.z) < 18 + o.def.half[2] + car.def.half[2] && Math.abs(o.x - x) < 5.5 && Math.abs(o.y - car.y) < 4.5) return false;
+      if ((o.lc === 2 || o.lc === 3) && Math.abs(o.lcTo - x) < 5.5 && Math.abs(o.z - car.z) < 60 && Math.abs(o.y - car.y) < 4.5) return false;
+    }
+    return true;
+  }
+  function planCut(car, vPlayer, pcx) {
+    const vrel = vPlayer - car.speed; if (vrel < 8) return;
+    const d = diff(), dur = 0.85 - 0.1 * Math.min(2, d) * 0.5;
+    const ttc = (-car.z - car.def.half[2] - 4) / vrel;
+    if (car.z > -25 || ttc < LC_BLINK + dur * 0.6) { car.lc = 0; return; }   // too late to warn fairly: cancel
+    if (ttc > LC_BLINK + dur + car.lcSlack || lcActive >= lcMax() || car.hit || car.clear >= 0) return;
+    let li = 0, best = 1e9; for (let l = 0; l < 4; l++) { const q = Math.abs(LANES_X[l] - car.x); if (q < best) { best = q; li = l; } }
+    // first choice: toward the player's side when the run gets harder, else a coin flip
+    let s = rand() < 0.5 ? -1 : 1;
+    if (Math.abs(pcx - car.x) > 2 && rand() < 0.3 + 0.25 * Math.min(1, d)) s = pcx > car.x ? 1 : -1;
+    for (let a = 0; a < 2; a++, s = -s) {
+      const nl = li + s; if (nl < 0 || nl > 3) continue;
+      const to = LANES_X[nl] + (rand() - 0.5) * 1.2;
+      if (!laneFree(car, to)) continue;
+      car.lc = 2; car.lcT = 0; car.lcFrom = car.x; car.lcTo = to; car.lcDur = dur; car.tx = to; car.blink = LC_BLINK + dur;
+      lcActive++; lcCount++; lcEmit(car, 'warn');
+      return;
+    }
+    car.lc = 0; lcAborts++;
+  }
+  function lcEmit(car, phase) {
+    if (!NR.bus) return;
+    if (!car.lcPos) car.lcPos = new THREE.Vector3();
+    car.lcPos.set(car.x, car.y + car.def.cy, car.z);
+    LC_EVT.phase = phase; LC_EVT.pos = car.lcPos; LC_EVT.side = car.lcTo > car.lcFrom ? 1 : -1; LC_EVT.type = car.type;
+    NR.bus.emit('laneChange', LC_EVT);
+  }
 
   function playerBox() {
     const p = NR.player;
@@ -333,7 +382,7 @@
     reset(c) {
       core = c || core; if (!built) return;
       for (let i = cars.length - 1; i >= 0; i--) kill(i);
-      spawnCool = 0;
+      spawnCool = 0; lcCount = 0; lcAborts = 0;
       for (let i = 0; i < 9; i++) spawn(-170 - i * 62 - rand() * 20);
     },
     update(dt, c) {
@@ -347,14 +396,30 @@
       spawnCool -= dt;
       if (dt > 0 && spawnCool <= 0 && cars.length < desired()) { if (spawn()) spawnCool = 0.05; else spawnCool = 0.15; }
 
+      // lane-cut bookkeeping: count cuts in progress; the player's closing speed decides when a planned cut starts
+      lcActive = 0;
+      for (let i = 0; i < cars.length; i++) { const c = cars[i]; if ((c.lc === 2 || c.lc === 3) && !c.hit && c.clear < 0) lcActive++; }
+      const vPlayer = dt > 0 ? scroll / dt : 0;
+
       for (let i = cars.length - 1; i >= 0; i--) {
         const car = cars[i], h = car.def.half;
-        // lateral motion: siren clear, knock-away after a hit, or a slow lane change far ahead
+        if (car.lc === 1 && play && dt > 0) planCut(car, vPlayer, pcx);
+        // lateral motion: siren clear, knock-away after a hit, a lane cut near the player, or a slow lane change far ahead
+        if (car.clear >= 0 || car.hit) { if (car.lc === 2 || car.lc === 3) car.lc = 4; }
         if (car.clear >= 0) {
           car.clear += dt; const k = Math.min(1, car.clear / 1.0), e = k * k * (3 - 2 * k);
           car.x = car.x0 + (car.side * 48 - car.x0) * e; car.y = car.y0 + 9 * e; car.roll = -car.side * car.dir * 0.7 * Math.sin(Math.PI * Math.min(1, k * 1.4));
         } else if (car.hit) {
           car.x += car.vx * dt; car.vx *= Math.exp(-dt * 0.6); car.spin += dt * 2.5; car.roll = Math.sin(car.spin * 3) * 0.5; car.y -= dt * 3;
+        } else if (car.lc === 2) { // blinker on, holding the lane; a slight lean toward the new lane
+          car.lcT += dt; const s = car.lcTo > car.lcFrom ? 1 : -1;
+          car.roll = -s * car.dir * 0.06 * Math.min(1, car.lcT * 3);
+          if (car.lcT >= LC_BLINK) { car.lc = 3; car.lcT = 0; lcEmit(car, 'swerve'); }
+        } else if (car.lc === 3) { // the cut: eased slide of one lane with a bank
+          car.lcT += dt; const k = Math.min(1, car.lcT / car.lcDur), e = k * k * (3 - 2 * k), s = car.lcTo > car.lcFrom ? 1 : -1;
+          car.x = car.lcFrom + (car.lcTo - car.lcFrom) * e;
+          car.roll = -s * car.dir * (0.06 + 0.32 * Math.sin(Math.PI * k));
+          if (k >= 1) { car.lc = 4; car.tx = car.x; car.blink = 0; }
         } else if (car.type !== 'hauler') {
           car.laneT -= dt;
           if (car.laneT <= 0 && car.z < -260 && car.z > -700) {
@@ -405,7 +470,9 @@
         t.body.setColorAt(n, _col);
         let li = 1;
         if (car.hit) li = (Math.floor(time * 14) & 1) ? 0.25 : 1.4;
-        t.emi.setColorAt(n, _col.setRGB(li, li, li));
+        const cutting = car.lc === 2 || car.lc === 3, blinkOn = cutting && (Math.floor(car.lcT * 6 + (car.lc === 3 ? 0.5 : 0)) & 1) === 0;
+        if (blinkOn) t.emi.setColorAt(n, _col.setRGB(1.55, 1.15, 0.55)); // the whole light strip pulses amber with the blinker
+        else t.emi.setColorAt(n, _col.setRGB(li, li, li));
         // glow halos, facing-dependent: same-direction shows red tails, oncoming shows white heads
         const sgn = car.dir > 0 ? 1 : -1, fade = car.hit ? 0.5 : 1;
         if (car.dir > 0) for (const g of d.rear) G(car.x + g[0] * sgn, y + g[1], car.z + g[2] * sgn, 0xff3a28, g[3], 1.15 * fade);
@@ -413,7 +480,13 @@
         G(car.x, y - d.half[1] - 0.3, car.z, 0x4f9aa6, d.half[0] * 2.4, 0.45 * fade);
         const tp = d.top; G(car.x + tp[0], y + tp[1], car.z + tp[2] * sgn, car.type === 'cab' ? 0xd9953f : accent[(car.paint < 0 ? 2 : car.paint) & 3], tp[3], 0.8);
         if (d.beacons) { const on = (Math.floor(time * 3 + car.ph) & 1) === 0; if (on) for (const g of d.beacons) G(car.x + g[0] * sgn, y + g[1], car.z + g[2] * sgn, 0xffa030, 2.2, 1.8); }
-        if (car.blink > 0 && (Math.floor(time * 5) & 1)) {
+        if (cutting) { // lane cut near the player: big amber blinker out at the side, rear and front corners, lit on the first frame
+          if (blinkOn) {
+            const s = car.lcTo > car.lcFrom ? 1 : -1, sx = car.x + s * (h0(d) + 0.55);
+            G(sx, y + 0.45, car.z + d.half[2] * 0.95 * sgn, 0xffb050, 3.6, 2.6);
+            G(sx, y + 0.45, car.z - d.half[2] * 0.85 * sgn, 0xffb050, 2.2, 1.8);
+          }
+        } else if (car.blink > 0 && (Math.floor(time * 5) & 1)) {
           const s = car.tx > car.x ? 1 : -1; G(car.x + s * (h0(d) + 0.1), y, car.z + d.half[2] * 0.8 * sgn, 0xffa53a, 1.4, 1.6);
         }
         if (car.clear >= 0 && car.clear < 1.2) { const on = Math.floor(time * 8) & 1; G(car.x, y + d.half[1] + 0.4, car.z, on ? 0xc9584a : 0x7ab3b8, 2.4, 1.5); }
@@ -479,7 +552,9 @@
     stats() {
       const by = {}; for (const k in T) by[k] = 0; let onc = 0;
       for (const c of cars) { by[c.type]++; if (c.dir < 0) onc++; }
-      return { active: cars.length, desired: desired(), byType: by, oncoming: onc, glows: gN, blimps: blimps.length };
+      let planned = 0; for (const c of cars) if (c.lc === 1) planned++;
+      return { active: cars.length, desired: desired(), byType: by, oncoming: onc, glows: gN, blimps: blimps.length,
+        difficulty: +diff().toFixed(2), lcChance: +lcChance().toFixed(2), lcMax: lcMax(), lcPlanned: planned, lcActive, lcCount, lcAborts };
     },
   };
   function h0(d) { return d.half[0]; }

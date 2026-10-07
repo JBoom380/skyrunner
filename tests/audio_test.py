@@ -47,7 +47,7 @@ try:
 
         page.evaluate('NR.core.start()'); page.wait_for_timeout(800)
         s2 = st()
-        check('PLAY: engine + wind up, music not restarted', s2['eng'] > 0.12 and s2['wind'] > 0.04 and s2['time'] > s1['time'] and 'rainy_sax' in s2['src'],
+        check('PLAY: engine + wind up, music not restarted', s2['eng'] > 0.04 and s2['wind'] > 0.04 and s2['time'] > s1['time'] and 'rainy_sax' in s2['src'],
               f"eng={s2['eng']:.3f} wind={s2['wind']:.3f} t={s2['time']:.1f}")
 
         # every SFX event

@@ -38,13 +38,14 @@ try:
         if pg.evaluate("NR.core.state") != "PLAY":
             pg.evaluate("NR.core.start()")
         pg.evaluate(AUTO_JS)
+        pg.evaluate("setInterval(() => { NR.controls.state.roll = Math.random() < 0.02 }, 50)")
         pg.evaluate("window.__wc = NR.world.collide; window.__tc = NR.traffic.collide; const nohit = () => ({hit: false}); NR.world.collide = nohit; NR.traffic.collide = nohit;")
         pg.evaluate(WAIT_JS, 3000)
         print("PLAY fps", pg.evaluate(FPS_JS))
         L = 2800
         for d, name in enumerate(["Neon Canyon", "Fire Stacks", "The Arcology", "Dust Sea", "The Sea Wall"]):
             if d:
-                pg.evaluate(f"(() => {{ const d = {d * L + 900}; if (NR.world && NR.world.jump) NR.world.jump(d); NR.core.dist = d; }})()")
+                pg.evaluate(f"(() => {{ const d = {d * L + 900 + 14000}; if (NR.world && NR.world.jump) NR.world.jump(d); NR.core.dist = d; }})()")
             pg.evaluate(WAIT_JS, 4000)
             fps = pg.evaluate(FPS_JS)
             info = pg.evaluate("({d: NR.core.district, dist: NR.core.dist|0, spd: NR.core.speed|0, cars: NR.traffic && NR.traffic.cars ? NR.traffic.cars.length : -1})")
