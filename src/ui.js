@@ -557,6 +557,24 @@
   let buzz = 0, vBuzz = false;
 
   // ---------------------------------------------------------------- module API
+  // Phones block sound until a tap. A "TAP TO ENTER" gate in front of the title makes the first tap start the menu music.
+  function gate() {
+    if (document.getElementById('nrgate')) return;
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {} // iOS: play even with the silent switch on
+    const g = document.createElement('div'); g.id = 'nrgate';
+    g.style.cssText = 'position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;padding-bottom:16vh;' +
+      'background:rgba(5,6,9,.55);font-family:"Courier New",monospace;color:#f0d8a8;letter-spacing:6px;font-size:18px;text-shadow:0 0 10px #d9953f;cursor:pointer;touch-action:none';
+    g.innerHTML = '<span style="animation:nrblink 1.6s steps(2) infinite">TAP TO ENTER</span><style>@keyframes nrblink{50%{opacity:.25}}</style>';
+    const go = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (NR.audio && NR.audio.unlock) { try { NR.audio.unlock(); } catch (err) {} }
+      g.remove(); removeEventListener('keydown', key, true);
+    };
+    const key = (e) => go(e);
+    g.addEventListener('click', go); g.addEventListener('touchend', go);
+    addEventListener('keydown', key, true);
+    document.body.appendChild(g);
+  }
   function init(c) {
     core = c;
     if (!built) build();
@@ -577,6 +595,7 @@
       });
     }
     addEventListener('keydown', onKey);
+    gate();
     document.addEventListener('visibilitychange', () => { if (document.hidden && core && core.state === 'PLAY') core.pause(true); });
     sync(core.state || 'TITLE');
   }
