@@ -1,0 +1,132 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>NEON RAIN title drafts</title>
+<style>
+html,body{margin:0;background:#000;height:100%;overflow:hidden}
+#c{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+#ui{position:absolute;inset:0;font-family:"Courier New",monospace;color:#e8c890;pointer-events:none;text-shadow:0 0 8px rgba(217,149,63,.7)}
+.logo{position:absolute;left:0;right:0;text-align:center}
+.logo h1{margin:0;font-size:56px;letter-spacing:6px;color:#f0d8a8;text-shadow:0 0 18px #d9953f,0 0 3px #fff;line-height:.95}
+.logo h2{margin:6px 0 0;font-size:15px;letter-spacing:9px;color:#8fb0b4;text-shadow:0 0 6px #2a5a60}
+.menu{position:absolute;left:0;right:0;text-align:center;font-size:17px;letter-spacing:3px;line-height:2.1}
+.menu .sel{color:#fff;text-shadow:0 0 10px #d9953f}.menu .sel:before{content:'\25B8  '}
+.menu span{display:block;color:#b9a27a}
+.foot{position:absolute;left:0;right:0;bottom:22px;text-align:center;font-size:10px;letter-spacing:2px;color:#7f8f90;text-shadow:none}
+.left .logo,.left .menu{text-align:left;padding-left:26px}
+</style></head>
+<body><canvas id="c"></canvas><div id="ui"></div>
+<script>
+const Q = new URLSearchParams(location.search), K = +(Q.get('k') || 0);
+const W = 270, H = 480;
+const cv = document.getElementById('c'); cv.width = W; cv.height = H;
+const g = cv.getContext('2d');
+const R = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(99 + K * 13);
+const rnd = (a, b) => a + (b - a) * R();
+const AMBER = '#e8a04a', EMBER = '#ffcf80', TEAL = '#7fb8bc', RED = '#c9584a';
+
+function img(src) { return new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = src; }); }
+function cover(im, dim = 1, blur = 0, dx = 0, dy = 0, sc = 1) {
+  g.save(); if (blur) g.filter = `blur(${blur}px) brightness(${dim})`; else g.filter = `brightness(${dim})`;
+  const s = Math.max(W / im.width, H / im.height) * sc; const w = im.width * s, h = im.height * s;
+  g.drawImage(im, (W - w) / 2 + dx, (H - h) / 2 + dy, w, h); g.restore();
+}
+// ---- detective shapes (unit coords, drawn with a transform) ----
+function standing(p) { // full figure, trench coat, collar up, right hand at mouth
+  p.moveTo(44, 16); p.quadraticCurveTo(52, 9, 59, 15); p.lineTo(61, 22); p.quadraticCurveTo(62, 34, 56, 38); // head
+  p.lineTo(66, 34); p.lineTo(70, 46); // raised collar
+  p.lineTo(78, 52); p.lineTo(84, 70); p.lineTo(80, 92); // shoulder down to elbow (arm bent up)
+  p.lineTo(66, 54); p.lineTo(62, 44); p.lineTo(58, 42); // forearm up to mouth
+  p.lineTo(60, 48); p.lineTo(72, 66); p.lineTo(74, 110); p.lineTo(80, 150); p.lineTo(86, 206); // coat right edge
+  p.lineTo(60, 206); p.lineTo(56, 160); p.lineTo(50, 206); p.lineTo(18, 206); // legs gap
+  p.lineTo(24, 150); p.lineTo(26, 110); p.lineTo(22, 74); p.lineTo(28, 54); p.lineTo(38, 46); // left side
+  p.lineTo(34, 34); p.lineTo(42, 40); p.quadraticCurveTo(38, 26, 44, 18); p.closePath();
+}
+function profile(p) { // head and shoulders, facing right
+  p.moveTo(30, 14); p.quadraticCurveTo(46, 3, 60, 10); p.quadraticCurveTo(68, 17, 68, 28); // hair + forehead
+  p.lineTo(70, 34); p.lineTo(76, 42); p.lineTo(70, 45); p.lineTo(71, 49); p.lineTo(68, 51); p.lineTo(69, 55); // nose, lips
+  p.quadraticCurveTo(68, 62, 60, 64); p.lineTo(56, 68); p.lineTo(70, 66); p.lineTo(76, 76); p.lineTo(84, 100); // chin, jaw, collar
+  p.lineTo(0, 100); p.lineTo(4, 78); p.lineTo(22, 64); p.lineTo(28, 66); p.lineTo(24, 48); p.quadraticCurveTo(20, 28, 30, 14); p.closePath();
+}
+function figure(shape, x, y, s, rimCol, rimDx, body = '#06080a', flip = false) {
+  const draw = (col, ox, oy) => { g.save(); g.translate(x + ox, y + oy); g.scale(flip ? -s : s, s); g.beginPath(); shape(g); g.fillStyle = col; g.fill(); g.restore(); };
+  draw(rimCol, 0, 0); draw(body, rimDx, 0.6);
+}
+function ember(x, y, r = 1.6) {
+  const gr = g.createRadialGradient(x, y, 0, x, y, r * 7); gr.addColorStop(0, 'rgba(255,190,90,.9)'); gr.addColorStop(1, 'rgba(255,120,30,0)');
+  g.fillStyle = gr; g.fillRect(x - r * 7, y - r * 7, r * 14, r * 14); g.fillStyle = EMBER; g.fillRect(x - r / 2, y - r / 2, r, r);
+}
+function cigarette(x, y, len, ang) { g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = '#d8d0c0'; g.fillRect(0, -0.6, len, 1.2); g.restore(); ember(x + Math.cos(ang) * len, y + Math.sin(ang) * len); }
+function smoke(x, y, h, sway, lit = TEAL) {
+  for (let i = 0; i < 70; i++) {
+    const t = i / 70, yy = y - t * h, xx = x + Math.sin(t * 6 + K) * sway * t + Math.sin(t * 17) * 3 * t;
+    const r = 1.5 + t * 9; g.fillStyle = `rgba(${i % 3 ? '170,180,180' : '200,190,170'},${0.16 * (1 - t)})`;
+    g.beginPath(); g.arc(xx, yy, r, 0, 7); g.fill();
+  }
+}
+function rain(n, a = 0.18, len = 7) { g.strokeStyle = `rgba(180,195,200,${a})`; g.lineWidth = 1; for (let i = 0; i < n; i++) { const x = rnd(0, W), y = rnd(0, H); g.beginPath(); g.moveTo(x, y); g.lineTo(x - 1.5, y + len); g.stroke(); } }
+function vignette(k = 0.75) { const gr = g.createRadialGradient(W / 2, H * 0.45, H * 0.15, W / 2, H * 0.5, H * 0.75); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, `rgba(0,0,0,${k})`); g.fillStyle = gr; g.fillRect(0, 0, W, H); }
+function haze(col, y0, y1, a) { const gr = g.createLinearGradient(0, y0, 0, y1); gr.addColorStop(0, col.replace('A', 0)); gr.addColorStop(0.5, col.replace('A', a)); gr.addColorStop(1, col.replace('A', 0)); g.fillStyle = gr; g.fillRect(0, y0, W, y1 - y0); }
+
+// ---- palette crush (same 18 colours as the game) ----
+const P = [[.02,.025,.035],[.055,.07,.085],[.09,.12,.15],[.14,.19,.22],[.21,.27,.30],[.33,.40,.42],[.10,.07,.05],[.20,.12,.07],[.36,.20,.10],[.62,.38,.17],[.86,.60,.30],[.96,.84,.62],[.30,.10,.09],[.62,.26,.21],[.22,.45,.49],[.48,.70,.72],[.58,.40,.46],[.92,.93,.90]].map(c => c.map(v => v * 255));
+const B = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function crush() {
+  const d = g.getImageData(0, 0, W, H), a = d.data;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4, o = (B[(x & 3) + (y & 3) * 4] / 16 - 0.5) * 16;
+    const r = a[i] + o, gg = a[i + 1] + o, b = a[i + 2] + o; let bd = 1e9, best = P[0];
+    for (const c of P) { const e = (r - c[0]) ** 2 + 1.3 * (gg - c[1]) ** 2 + 0.8 * (b - c[2]) ** 2; if (e < bd) { bd = e; best = c; } }
+    a[i] = best[0]; a[i + 1] = best[1]; a[i + 2] = best[2];
+  }
+  g.putImageData(d, 0, 0);
+}
+const ui = document.getElementById('ui');
+const MENU = (top) => `<div class="menu" style="top:${top}"><span class="sel">START PURSUIT</span><span>BEST RUNS</span><span>SETTINGS</span><span>CREDITS</span></div>`;
+const LOGO = (top) => `<div class="logo" style="top:${top}"><h1>NEON<br>RAIN</h1><h2>SKY PURSUIT</h2></div>`;
+const FOOT = `<div class="foot">MUSIC: RAINY SAX &nbsp;·&nbsp; BEST 184,220</div>`;
+
+(async () => {
+  const canyon = await img('shot_bg_d0.png'), titleBg = await img('shot_bg_title.png'), fire = await img('shot_bg_d1.png');
+  if (K === 0) { // ALLEY: full figure under a sign, rim light from the left
+    cover(canyon, 0.75); haze('rgba(30,40,45,A)', 250, 480, 0.8);
+    g.fillStyle = '#05070a'; g.fillRect(0, 380, W, 100); // wet ground
+    for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(232,160,74,${rnd(0.05, 0.2)})`; g.fillRect(rnd(0, W), rnd(384, 470), rnd(6, 30), 1); } // puddle streaks
+    const sg = g.createLinearGradient(0, 0, 120, 0); sg.addColorStop(0, 'rgba(127,184,188,.35)'); sg.addColorStop(1, 'rgba(127,184,188,0)'); g.fillStyle = sg; g.fillRect(0, 150, 140, 260); // sign spill
+    figure(standing, 140, 150, 1.25, TEAL, 1.8);
+    cigarette(213, 203, 7, -0.2); smoke(220, 200, 150, 26);
+    rain(Q.get('noui') ? 0 : 260); vignette(0.8); if (!Q.get('nocrush')) crush();
+    if (!Q.get('noui')) ui.innerHTML = '<div class="left">' + LOGO('5%') + MENU('64%') + '</div>' + FOOT;
+  } else if (K === 1) { // BLINDS: office window, light slats across the silhouette
+    g.fillStyle = '#07090c'; g.fillRect(0, 0, W, H);
+    g.save(); g.beginPath(); g.rect(20, 40, 230, 300); g.clip(); cover(canyon, 0.9, 0.6);
+    g.fillStyle = 'rgba(0,0,0,.9)'; for (let y = 40; y < 340; y += 9) g.fillRect(20, y + 5, 230, 4); g.restore(); // blinds
+    g.strokeStyle = '#141a1e'; g.lineWidth = 6; g.strokeRect(20, 40, 230, 300); g.fillRect(132, 40, 6, 300);
+    figure(profile, 70, 230, 2.2, AMBER, -2.2);
+    g.save(); g.translate(70, 230); g.scale(2.2, 2.2); g.beginPath(); profile(g); g.restore(); g.save(); g.clip();
+    g.fillStyle = 'rgba(232,160,74,.22)'; for (let y = 236; y < 480; y += 14) { g.save(); g.translate(0, y); g.rotate(-0.12); g.fillRect(0, 0, W, 6); g.restore(); } g.restore(); // slats of light on him
+    cigarette(232, 340, 9, -0.1); smoke(242, 338, 230, 40);
+    rain(60, 0.1); vignette(0.7); crush();
+    ui.innerHTML = '<div class="left">' + LOGO('3.5%') + MENU('22%') + '</div>' + FOOT;
+  } else if (K === 2) { // ROOFTOP: from behind on a ledge, cruiser passing the canyon
+    cover(titleBg, 0.85, 0, 0, 30, 1.05);
+    haze('rgba(40,44,46,A)', 300, 480, 0.6);
+    g.fillStyle = '#05070a'; g.beginPath(); g.moveTo(0, 412); g.lineTo(W, 400); g.lineTo(W, H); g.lineTo(0, H); g.fill(); // ledge
+    g.fillStyle = '#0d1115'; g.fillRect(0, 404, W, 4);
+    figure(standing, 14, 232, 0.85, '#c9a070', 1.2, '#05070a', false);
+    ember(64, 268, 1.4); smoke(64, 266, 140, 30);
+    rain(320, 0.2); vignette(0.75); crush();
+    ui.innerHTML = LOGO('6%') + '<div class="menu" style="top:64%;text-align:right;padding-right:26px"><span class="sel">START PURSUIT</span><span>BEST RUNS</span><span>SETTINGS</span><span>CREDITS</span></div>' + FOOT;
+  } else { // CLOSE-UP: big profile, face half lit amber, teal rim, fire stacks bokeh
+    cover(fire, 0.9, 2.2, 0, -40);
+    haze('rgba(60,40,30,A)', 120, 420, 0.5);
+    figure(profile, 280, 170, 3.3, TEAL, -2.6, '#05070a', true);
+    // warm key light on the face side
+    g.save(); g.translate(280, 170); g.scale(-3.3, 3.3); g.beginPath(); profile(g); g.restore(); g.save(); g.clip();
+    const kg = g.createLinearGradient(30, 0, 120, 0); kg.addColorStop(0, 'rgba(232,160,74,.0)'); kg.addColorStop(0.55, 'rgba(232,160,74,.0)'); kg.addColorStop(1, 'rgba(0,0,0,0)');
+    const fg = g.createRadialGradient(40, 300, 4, 40, 300, 60); fg.addColorStop(0, 'rgba(255,170,90,.55)'); fg.addColorStop(1, 'rgba(255,170,90,0)'); g.fillStyle = fg; g.fillRect(0, 200, 200, 200); g.restore();
+    cigarette(20, 330, 12, 0.15); smoke(30, 330, 300, 50);
+    rain(140, 0.14); vignette(0.65); crush();
+    ui.innerHTML = '<div class="left">' + LOGO('5%') + '</div>' + MENU('70%') + FOOT;
+  }
+  window.READY = true;
+})();
+</script></body></html>
