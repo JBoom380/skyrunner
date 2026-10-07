@@ -144,7 +144,7 @@
     // sub panels
     E.pBest = panel('BEST RUNS'); E.pSet = panel('SETTINGS'); E.pCred = panel('CREDITS');
     E.pCred.body.innerHTML = '<div class="cred"><p><span>A GAME BY</span><b>JOHN SLAGBOOM</b></p>' +
-      '<p><span>MUSIC BY JOHN SLAGBOOM</span><b>RAINY SAX</b><br><b>OLD SCHOOL TEST 1</b></p><p><span>BUILT WITH</span><b>THREE.JS</b></p></div>';
+      '<p><span>MUSIC</span><b>RAINY SAX</b><br><b>OLD SCHOOL TEST 1</b></p><p><span>BUILT WITH</span><b>THREE.JS</b></p></div>';
     buildSettings();
 
     // HUD
