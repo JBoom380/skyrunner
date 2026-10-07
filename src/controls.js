@@ -289,6 +289,33 @@
     state.any = pend.any;
     pend.siren = pend.pause = pend.any = false;
     if (shown && el) draw(state.boost);
+    keyHud(play);
+  }
+
+  // Keyboard players get a small key panel (bottom of the screen): BOOST and SIREN keys, SIREN lights up when ready.
+  let kh = null, khOn = false, khReady = null, khFuel = -1;
+  function keyHud(play) {
+    const on = play && !shown && !(core && core.isTouch) && lastDevice !== 'touch';
+    if (!kh) {
+      const ui = document.getElementById('ui'); if (!ui) return;
+      kh = document.createElement('div'); kh.id = 'nrkeys';
+      kh.style.cssText = 'position:absolute;left:0;right:0;bottom:18px;display:none;justify-content:center;gap:14px;font-family:"Courier New",monospace;font-size:13px;letter-spacing:2px;pointer-events:none;z-index:6';
+      kh.innerHTML = '<div class="k b" style="padding:7px 12px;border:2px solid #d9a050;color:#f0d8a8;background:rgba(5,6,9,.6)"><b style="color:#fff">SPACE</b> BOOST</div>' +
+        '<div class="k s" style="padding:7px 12px;border:2px solid #54666b;color:#8a9496;background:rgba(5,6,9,.6)"><b>E</b> SIREN <span class="st">CHARGING</span></div>';
+      ui.appendChild(kh);
+    }
+    if (on !== khOn) { khOn = on; kh.style.display = on ? 'flex' : 'none'; }
+    if (!on) return;
+    const p = NR.player, ready = !!(p && p.siren >= 1);
+    if (ready !== khReady) {
+      khReady = ready; const sEl = kh.querySelector('.s');
+      sEl.style.borderColor = ready ? '#c9584a' : '#54666b'; sEl.style.color = ready ? '#f0c0b0' : '#8a9496';
+      sEl.style.boxShadow = ready ? '0 0 12px rgba(201,88,74,.9)' : 'none';
+      sEl.querySelector('b').style.color = ready ? '#fff' : '#8a9496';
+      sEl.querySelector('.st').textContent = ready ? 'READY' : 'CHARGING';
+    }
+    const fuel = p ? Math.round((p.boostFuel || 0) * 10) : 10;
+    if (fuel !== khFuel) { khFuel = fuel; kh.querySelector('.b').style.opacity = 0.45 + fuel * 0.055; }
   }
 
   function reset() { releaseTouches(); neutral(); pend.siren = pend.pause = pend.any = false; state.siren = state.pause = state.any = false; }

@@ -292,9 +292,9 @@
     const f = 44 + k * 26 + (b ? 14 : 0) + (p && p.vel && typeof p.vel.y === 'number' ? Math.max(-4, Math.min(4, p.vel.y * 0.25)) : 0);
     loops.o1.frequency.setTargetAtTime(f, t, 0.15); loops.o2.frequency.setTargetAtTime(f * 1.012, t, 0.15); loops.o3.frequency.setTargetAtTime(f * 0.5, t, 0.15);
     loops.engLP.frequency.setTargetAtTime(380 + k * 500 + (b ? 500 : 0), t, 0.2);
-    loops.eng.gain.setTargetAtTime(0.16 * on, t, 0.12);
+    loops.eng.gain.setTargetAtTime(0.065 * on, t, 0.12);
     loops.whine.frequency.setTargetAtTime(700 + k * 900 + (b ? 500 : 0), t, 0.25);
-    loops.whineG.gain.setTargetAtTime((0.012 + k * 0.018) * on, t, 0.2);
+    loops.whineG.gain.setTargetAtTime((0.004 + k * 0.007) * on, t, 0.2);
     loops.windBP.frequency.setTargetAtTime(500 + k * 1600 + (b ? 900 : 0), t, 0.2);
     loops.wind.gain.setTargetAtTime((live ? 0.07 + k * 0.12 + (b ? 0.08 : 0) : idle ? 0.03 : 0), t, 0.2);
     loops.boostLP.frequency.setTargetAtTime(b && live ? 1400 : 500, t, 0.15);
