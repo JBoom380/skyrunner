@@ -82005,6 +82005,25 @@ void main(){ vUv = uv; vS = aSeed; vA = aAd; vec4 wp = modelMatrix * instanceMat
     const adMat = new THREE.ShaderMaterial({ uniforms: { map: { value: adAtlas() }, uTime: { value: 0 }, uFogD: { value: 0.001 } }, vertexShader: ADS_V, fragmentShader: ADS_F, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
     P.ads = IPool('ads', new THREE.PlaneGeometry(1, 1), adMat, 24, { aSeed: 1, aAd: 1 });
     P.holo.push(P.ads);
+    // big neon martini glass hologram (after the NEON RAIN cocktail advert): pink glass and frame, cyan olive, invented glyphs
+    const mtex = canvasTex(256, 512, (g, W_, H_) => {
+      g.fillStyle = '#000'; g.fillRect(0, 0, W_, H_); g.lineCap = 'round'; g.lineJoin = 'round';
+      const rnd = NR.rng(808), pink = '#ff4ab8', cyan = '#3ae8ff';
+      g.strokeStyle = pink; g.shadowColor = pink; g.shadowBlur = 14; g.lineWidth = 7;
+      g.beginPath(); g.moveTo(48, 110); g.lineTo(208, 110); g.lineTo(128, 235); g.closePath(); g.stroke();
+      g.beginPath(); g.moveTo(128, 235); g.lineTo(128, 320); g.moveTo(85, 325); g.lineTo(171, 325); g.stroke();
+      g.fillStyle = 'rgba(255,90,190,0.35)'; g.beginPath(); g.moveTo(75, 150); g.lineTo(181, 150); g.lineTo(128, 225); g.closePath(); g.fill();
+      g.strokeStyle = cyan; g.shadowColor = cyan; g.lineWidth = 4.5; g.beginPath(); g.arc(170, 125, 17, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(170, 125); g.lineTo(196, 78); g.stroke();
+      g.lineWidth = 3.5;
+      for (let i = 0; i < 4; i++) { const cy = 370 + i * 33; for (let k = 0; k < 3; k++) {
+        const p = () => [128 + (Math.floor(rnd() * 3) - 1) * 13, cy + (Math.floor(rnd() * 3) - 1) * 12]; const [a1, b1] = p(), [a2, b2] = p();
+        g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); } }
+      g.strokeStyle = pink; g.shadowColor = pink; g.lineWidth = 3; g.strokeRect(20, 20, W_ - 40, H_ - 40);
+    }, false);
+    const mmat = new THREE.ShaderMaterial({ uniforms: { map: { value: mtex }, uTime: { value: 0 }, uFogD: { value: 0.001 } }, vertexShader: HOLO_V, fragmentShader: HOLO_F, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    P.martini = IPool('martini', new THREE.PlaneGeometry(1, 1), mmat, 8, { aSeed: 1 });
+    P.holo.push(P.martini);
 
     // searchlight beams (pooled meshes, sweep each frame)
     const bg = new THREE.CylinderGeometry(1.5, 22, 720, 12, 1, true); bg.translate(0, 360, 0);
@@ -82141,6 +82160,10 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     const pool = P.holo[k], aspect = k === 2 ? 1.33 : 0.75;
     const i = pool.add(q + 30, x, y, zl(q), size * aspect, size, 1, 0, x > 0 ? -0.55 : 0.55, 0); pool.put('aSeed', i, R() * 10);
     glow(q, x, y, [0x4f9aa6, 0xc9584a, 0xd9953f][k], size * 1.1, 0.35);
+  }
+  function martini(q, x, y, size) {
+    const i = P.martini.add(q + 30, x, y, zl(q), size * 0.5, size, 1, 0, x > 0 ? -0.55 : 0.55, 0); P.martini.put('aSeed', i, R() * 10);
+    glow(q, x, y, 0xff4ab8, size * 0.9, 0.35);
   }
   // hologram ad on a building face beside the corridor; ad = 0..7 (see adAtlas)
   function adHolo(q, x, y, size, ad) {
@@ -82325,6 +82348,7 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
       for (let k = 0; k < 4; k++) glow(q + k * 10, s * rr(4, 22), GY + 4, s > 0 ? 0xc9584a : 0xf5d69e, 2.2, 1.3, 0, s * -18);
     }
     if (chance(0.22)) holo(q + 20, sgn() * rr(30, 34), rr(38, 70), rr(52, 76), (R() * 3) | 0);
+    else if (chance(0.1)) martini(q + 20, sgn() * rr(31, 35), rr(36, 62), rr(40, 58));
     if (chance(0.3)) adHolo(q + rr(5, 35), sgn() * rr(30, 34), rr(12, 44), rr(22, 32), (R() * 8) | 0);
     if (chance(0.1)) searchlight(q + 20, sgn() * rr(60, 200), GY);
     if (chance(0.18)) { const y = rr(48, 140), qq = q + rr(5, 35); solid(P.box, qq, 0, y, 90, 4, 6, 0x15191d); neon(qq - 3.1, 0, y - 2.2, 90, 0.35, 0.2, 0xd9953f, 1.2); for (let x = -36; x <= 36; x += 12) glow(qq - 3.2, x, y - 2.8, 0xd9a050, 4, 0.7); }
@@ -82376,6 +82400,7 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     for (let x = -500; x <= 500; x += 40) if (chance(0.5) && Math.abs(x) > 30) glow(q + rr(0, 40), x, GY + 1, 0xe0b070, 2.4, 1.1);
     if (chance(0.16)) searchlight(q + 20, sgn() * rr(60, 240), GY);
     if (chance(0.08)) holo(q + 20, sgn() * rr(36, 44), rr(40, 70), rr(50, 70), (R() * 2) | 0);
+    else if (chance(0.06)) martini(q + 20, sgn() * rr(37, 44), rr(40, 66), rr(40, 58));
     if (chance(0.2)) adHolo(q + rr(5, 35), sgn() * rr(34, 40), rr(12, 48), rr(24, 34), (R() * 8) | 0);
   }
   function dustSlice(q) {
@@ -82420,6 +82445,7 @@ void main(){ vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -
     if (chance(0.22)) steam(q + 20, -38, rr(-30, 10), 0x8f9a9e, 14, 0.18, 6);
     if (chance(0.12)) searchlight(q + 20, -60, GY + 470);
     if (chance(0.05)) holo(q + 20, -36, rr(50, 90), rr(60, 80), 0);
+    else if (chance(0.05)) martini(q + 20, -36, rr(46, 80), rr(44, 60));
     if (chance(0.1)) adHolo(q + rr(5, 35), -rr(32, 36), rr(12, 44), rr(22, 32), (R() * 8) | 0);
     if (chance(0.12)) { const x = rr(60, 600), h = rr(30, 60); solid(P.cyl, q + 20, x, GY + h / 2, 1.2, h, 1.2, 0x1c2228); glow(q + 20, x, GY + h + 1, 0xc9584a, 5, 1.8, 0.7); }
     if (chance(0.06)) { const x = rr(250, 900); solid(P.box, q + 20, x, GY + 6, rr(30, 60), 14, rr(140, 220), 0x15191d); glow(q + 20, x, GY + 16, 0xd9953f, 6, 1.2); }
