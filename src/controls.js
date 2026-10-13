@@ -1,7 +1,7 @@
 // SKYRUNNER controls: floating touch stick + BOOST/ROLL/SIREN buttons, keyboard, gamepad -> NR.controls.state. See SPEC.md.
 (function () {
   window.NR = window.NR || {};
-  const DEAD = 0.12, PAD_DEAD = 0.15, KEY_RATE = 7, ROLL_BUF = 0.18; // a roll pressed this close to the end of the cooldown fires when it ends
+  const DEAD = 0.08, PAD_DEAD = 0.15, KEY_RATE = 7, ROLL_BUF = 0.18; // a roll pressed this close to the end of the cooldown fires when it ends
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
   const state = { mx: 0, my: 0, boost: false, siren: false, roll: false, rollX: 0, rollY: 0, pause: false, any: false };
@@ -19,7 +19,7 @@
     const k = clamp(w / 390, 0.75, 1.6);
     const safeB = safeBottom();
     L.k = k; L.w = w; L.h = h;
-    L.R = Math.round(60 * k);
+    L.R = Math.round(45 * k);
     L.br = Math.round(50 * k); L.rr = Math.max(32, Math.round(36 * k)); L.sr = Math.round(37 * k);
     L.bx = w - Math.round(26 * k) - L.br; L.by = h - Math.round(42 * k) - safeB - L.br;
     // ROLL sits up-left of BOOST on the thumb's arc (slide from BOOST, or tap with a second finger); SIREN above ROLL
@@ -332,12 +332,12 @@
       if (!play) rollBuf = 0;
       else if (cd <= (core.dt || dt || 0.016)) {
         state.roll = true; rollBuf = 0;
-        // rollX/rollY: press direction snapped to 4 ways (0,0 = spin in place). Held keys win, so a tap of R toward a
+        // rollX/rollY: press direction as a unit vector at any angle (0,0 = roll in place). Held keys win, so a tap of R toward a
         // just-pressed arrow is not lost to the eased keyboard axis; the stick value is nudged the same way for this frame.
         let x = state.mx, y = state.my;
         if (rollKX || rollKY) { x = rollKX; y = rollKY; state.mx = clamp(state.mx + rollKX, -1, 1); state.my = clamp(state.my + rollKY, -1, 1); }
-        const ax = Math.abs(x), ay = Math.abs(y);
-        state.rollX = ax >= ay && ax > 0.3 ? Math.sign(x) : 0; state.rollY = ay > ax && ay > 0.3 ? Math.sign(y) : 0;
+        const len = Math.hypot(x, y);
+        state.rollX = len > 0.3 ? x / len : 0; state.rollY = len > 0.3 ? y / len : 0;
       } else rollBuf -= dt || 0.016;
     }
     if (rollBuf <= 0) { rollBuf = 0; rollKX = rollKY = 0; }

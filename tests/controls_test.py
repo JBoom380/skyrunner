@@ -65,7 +65,7 @@ try:
         st = pg.evaluate("({...NR.controls.state})")
         check("stick released -> 0", st["mx"] == 0 and st["my"] == 0, st)
         # deadzone
-        touch("touchStart", [(3, sx, sy)]); touch("touchMove", [(3, sx + 5, sy)])
+        touch("touchStart", [(3, sx, sy)]); touch("touchMove", [(3, sx + 3, sy)])
         check("deadzone", pg.evaluate("NR.controls.state.mx") == 0); touch("touchEnd", [])
         # siren: one frame only
         pg.evaluate("window._sir=0; (function f(){ if(NR.controls.state.siren) window._sir++; requestAnimationFrame(f); })()")
@@ -110,6 +110,7 @@ try:
         rx, ry = ox + L["rx"], oy + L["ry"]
         # tap ROLL with the stick held left -> one frame, dir (-1,0)
         touch("touchStart", [(6, sx, sy)]); touch("touchMove", [(6, sx - 50, sy)])
+        pg.evaluate("window._cool = false; (function f(){ if (NR.controls.els.roll.classList.contains('cool') && !NR.player.rolling) window._cool = true; requestAnimationFrame(f); })()")
         touch("touchStart", [(6, sx - 50, sy), (7, rx, ry)])
         pg.wait_for_timeout(120)
         check("touch roll one frame, left", len(rolls()) == 1 and rolls()[0][:2] == [-1, 0], rolls())
@@ -123,7 +124,7 @@ try:
         touch("touchEnd", [(6, sx - 50, sy)]); touch("touchEnd", [])
         if not realRoll: pg.evaluate("NR.player.rolling = false; NR.player.rollCooldown = 0.6")
         pg.wait_for_timeout(100)
-        check("cooldown look", pg.evaluate("NR.controls.els.roll.classList.contains('cool')"))
+        check("cooldown look", pg.evaluate("window._cool || NR.controls.els.roll.classList.contains('cool')"))
         pg.screenshot(path=os.path.join(OUT, "controls_roll_cooldown.png"))
         # press during long cooldown -> no roll, shake
         clear_rolls()

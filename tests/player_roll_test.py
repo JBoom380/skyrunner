@@ -42,9 +42,9 @@ SETUP = """() => {
     NR.controls.update = function (dt, core) { const r = cu.apply(this, arguments); const s = INP();
       for (const k in OVR) s[k] = OVR[k]; if (OVR.roll) delete OVR.roll; return r; }; }
   window.SET = o => { Object.assign(OVR, o); Object.assign(INP(), o); };
-  // one-frame press, like controls.state.roll + rollX/rollY snapped from the stick at the press
-  window.PRESS = () => { const s = INP(), x = s.mx, y = s.my, ax = Math.abs(x), ay = Math.abs(y);
-    SET({ roll: true, rollX: ax >= ay && ax > 0.3 ? Math.sign(x) : 0, rollY: ay > ax && ay > 0.3 ? Math.sign(y) : 0 });
+  // one-frame press, like controls.state.roll + rollX/rollY = the stick direction at the press (unit vector)
+  window.PRESS = () => { const s = INP(), x = s.mx, y = s.my, l = Math.hypot(x, y);
+    SET({ roll: true, rollX: l > 0.3 ? x / l : 0, rollY: l > 0.3 ? y / l : 0 });
     if (!NR.controls) requestAnimationFrame(() => requestAnimationFrame(() => { INP().roll = false; })); };
   // no world/traffic hits unless a test turns them on
   window.__hitOn = false; window.__calls = 0;
@@ -81,11 +81,11 @@ try:
         page.evaluate("NR.player.pos.x = 0; NR.player.vel.set(0, 0, 0); SET({mx: 0}); PRESS()")
         page.wait_for_timeout(120)
         r = page.evaluate("({r: NR.player.rolling, t: NR.player.rollT, d: NR.player.rollDir, c: NR.player.rollCooldown, ev: EV[EV.length-1]})")
-        check("roll starts, event", r["r"] and 0 < r["t"] < 1 and r["c"] == 1 and r["ev"] and r["ev"]["boost"] is False, r)
+        check("roll starts, event", r["r"] and 0 < r["t"] < 1 and r["c"] == 0.5 and r["ev"] and r["ev"]["boost"] is False, r)
         page.wait_for_timeout(500)
         r = page.evaluate("({r: NR.player.rolling, x: NR.player.pos.x, y: NR.player.pos.y, c: NR.player.rollCooldown})")
-        # stick was nearly centred at press -> spin in place; this checks centre = spin
-        check("centred press = flat spin, no travel", (not r["r"]) and abs(r["x"]) < 0.3, r)
+        # stick was nearly centred at press -> barrel roll in place, no travel
+        check("centred press = roll in place, no travel", (not r["r"]) and abs(r["x"]) < 0.3, r)
 
         # real right roll: stick held right, velocity zeroed so only roll moves the car
         page.wait_for_timeout(1100)
@@ -93,9 +93,9 @@ try:
         page.evaluate("SET({mx: 1}); PRESS()")
         page.wait_for_timeout(30)
         page.evaluate("SET({mx: 0}); NR.player.vel.set(0,0,0)")
-        page.wait_for_timeout(600)
+        page.wait_for_timeout(400)
         r = page.evaluate("({x: NR.player.pos.x, d: EV[EV.length-1].dir, k: EV[EV.length-1].kind})")
-        check("barrel roll right ~6 m", 5.2 < r["x"] < 8.5 and r["d"] == {"x": 1, "y": 0} and r["k"] == "barrel", r)
+        check("barrel roll right ~9.5 m", 8.5 < r["x"] < 12 and r["d"] == {"x": 1, "y": 0} and r["k"] == "barrel", r)
 
         # cooldown blocks an immediate second roll
         n = page.evaluate("EV.length")
@@ -105,14 +105,24 @@ try:
         check("cooldown blocks re-roll", r["n"] == n and not r["r"] and 0 < r["c"] < 1, r)
         page.wait_for_timeout(1000)
 
-        # loop up ~5 m
+        # up: still a barrel roll, ~9.5 m straight up
         page.evaluate(PLACE, [0, 10])
         page.evaluate("SET({my: 1}); PRESS()")
         page.wait_for_timeout(30)
         page.evaluate("SET({my: 0}); NR.player.vel.set(0,0,0)")
-        page.wait_for_timeout(600)
+        page.wait_for_timeout(500)
         r = page.evaluate("({y: NR.player.pos.y, k: EV[EV.length-1].kind})")
-        check("loop up ~5 m", 14.3 < r["y"] < 17.5 and r["k"] == "loop", r)
+        check("roll up ~9.5 m, barrel", 18.5 < r["y"] < 22.5 and r["k"] == "barrel", r)
+        page.wait_for_timeout(1100)
+
+        # diagonal: the dodge follows the stick angle (up-right 45 deg)
+        page.evaluate(PLACE, [0, 10])
+        page.evaluate("SET({mx: 1, my: 1}); PRESS()")
+        page.wait_for_timeout(30)
+        page.evaluate("SET({mx: 0, my: 0}); NR.player.vel.set(0,0,0)")
+        page.wait_for_timeout(500)
+        r = page.evaluate("({x: NR.player.pos.x, y: NR.player.pos.y, d: EV[EV.length-1].dir})")
+        check("diagonal roll ~6.7 m right + ~6.7 m up", 5.8 < r["x"] < 8.5 and 15.8 < r["y"] < 18.5 and abs(r["d"]["x"] - r["d"]["y"]) < 0.05, r)
         page.wait_for_timeout(1100)
 
         # boost combo: 1.5x distance, 0.35 s
@@ -125,7 +135,7 @@ try:
         page.wait_for_timeout(600)
         r = page.evaluate("({x: NR.player.pos.x, b: EV[EV.length-1].boost, ms: __tEnd - __t0})")
         page.evaluate("SET({boost: false})")
-        check("boost roll ~9 m left, ~0.35 s", -12 < r["x"] < -8 and r["b"] is True and 300 < r["ms"] < 460, r)
+        check("boost roll ~14 m left, ~0.25 s", -16.5 < r["x"] < -12.5 and r["b"] is True and 200 < r["ms"] < 360, r)
         page.wait_for_timeout(1100)
 
         # corridor clamp
@@ -138,21 +148,21 @@ try:
         check("roll clamps to corridor", abs(r - 18) < 0.01, r)
         page.wait_for_timeout(1100)
 
-        # no-collision window: collide() always hits during the roll; middle 0.3 s is safe
+        # no-collision window: collide() always hits during the roll; middle 0.2 s is safe
         page.evaluate(PLACE, [0, 10])
         r = page.evaluate("""() => new Promise(res => {
           const h0 = NR.player.hull; let safeHits = 0, calls0 = 0, inMid = 0;
           SET({mx: 1}); PRESS();
           const f = () => {
-            const p = NR.player, tt = p.rollT * 0.45;
-            if (p.rolling && tt > 0.09 && tt < 0.36) { if (!__hitOn) { __hitOn = true; calls0 = __calls; } inMid++; if (p.hull !== h0) safeHits++; }
+            const p = NR.player, tt = p.rollT * 0.3;
+            if (p.rolling && tt > 0.06 && tt < 0.24) { if (!__hitOn) { __hitOn = true; calls0 = __calls; } inMid++; if (p.hull !== h0) safeHits++; }
             if (p.rolling || !__hitOn) return requestAnimationFrame(f);
             const midCalls = __calls - calls0;
             setTimeout(() => { __hitOn = false; SET({mx: 0}); res({ safeHits, inMid, midCalls, hullAfter: NR.player.hull, h0 }); }, 120);
           };
           requestAnimationFrame(f);
         })""")
-        check("no hits in the safe window, hit after it", r["safeHits"] == 0 and r["inMid"] >= 8 and r["hullAfter"] == r["h0"] - 1, r)
+        check("no hits in the safe window, hit after it", r["safeHits"] == 0 and r["inMid"] >= 6 and r["hullAfter"] == r["h0"] - 1, r)
         page.wait_for_timeout(1700)
 
         # push: eased, moves, fades
@@ -180,7 +190,7 @@ try:
         check("drainSiren drains, clamps, re-arms sirenReady", r == {"a": 1, "b": 0.6, "c": 0, "ready": 2}, r)
 
         # screenshots mid-roll (player frozen at rollT 0.4, world keeps running)
-        for name, js in [("barrel", "SET({mx: 1})"), ("loop", "SET({my: 1})"), ("spin", "")]:
+        for name, js in [("barrel", "SET({mx: 1})"), ("up", "SET({my: 1})"), ("center", "")]:
             page.wait_for_timeout(1100)
             page.evaluate(PLACE, [0, 8])
             page.evaluate("FREEZE_AT = 0.38;" + js + "; PRESS()")

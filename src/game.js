@@ -69,14 +69,14 @@
   const core = NR.core = {
     THREE, scene, camera, renderer, settings, isTouch, time: 0, dt: 0, state: 'TITLE',
     input: { mx: 0, my: 0, boost: false, siren: false, pause: false },
-    speed: 0, scroll: 0, dist: 0, score: 0, difficulty: 0, fogExtra: 0, best: +(safeLoad(C.BEST_KEY).score || 0), nearMisses: 0,
+    speed: 0, scroll: 0, dist: 0, score: 0, difficulty: 0, fogExtra: 0, best: +(safeLoad(C.MODES.pursuit.best).score || 0), mode: 'pursuit', nearMisses: 0,
     district: 0, blend: { a: 0, b: 0, t: 0 }, loop: 0, view: null,
     camOffset: new THREE.Vector3(0, 4.2, 13.5), lookDrop: 17, // camera above/behind; look below the car so it rides at mid-screen, above the thumb controls
     shake(a, s) { shakeA = Math.max(shakeA, a); shakeT = Math.max(shakeT, s); },
     flash(hex, s, a = 0.6) { flashC.setHex(hex); flashT = flashMax = s; flashA = a; },
     saveSettings() { try { localStorage.setItem(C.SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} },
     setQuality(q) { settings.quality = q; core.saveSettings(); setRes(); },
-    start() { startRun(); }, toTitle() { setState('TITLE'); }, pause(on) { if (core.state === 'PLAY' && on) setState('PAUSE'); else if (core.state === 'PAUSE' && !on) setState('PLAY'); },
+    start(mode) { if (C.MODES[mode]) core.mode = mode; core.best = +(safeLoad(C.MODES[core.mode].best).score || 0); startRun(); }, toTitle() { setState('TITLE'); }, pause(on) { if (core.state === 'PLAY' && on) setState('PAUSE'); else if (core.state === 'PAUSE' && !on) setState('PLAY'); },
   };
   let shakeA = 0, shakeT = 0, flashT = 0, flashMax = 1, flashA = 0; const flashC = new THREE.Color();
   setRes();
@@ -106,15 +106,15 @@
   NR.bus.on('crash', () => {
     if (core.state !== 'PLAY') return;
     const best = Math.max(core.best, Math.floor(core.score)); const isBest = best > core.best; core.best = best;
-    try { localStorage.setItem(C.BEST_KEY, JSON.stringify({ score: best })); } catch (e) {}
+    try { localStorage.setItem(C.MODES[core.mode].best, JSON.stringify({ score: best })); } catch (e) {}
     setState('DEAD');
-    NR.bus.emit('runEnd', { score: Math.floor(core.score), best, isBest, dist: Math.floor(core.dist), nearMisses: core.nearMisses, district: core.district, loop: core.loop });
+    NR.bus.emit('runEnd', { mode: core.mode, score: Math.floor(core.score), best, isBest, dist: Math.floor(core.dist), nearMisses: core.nearMisses, district: core.district, loop: core.loop });
   });
 
   function updateRun(dt) {
     const p = NR.player;
     const boost = p && p.boosting ? C.BOOST_ADD : 0;
-    core.speed = Math.min(C.SPEED_MAX, core.speed + C.SPEED_RAMP * dt);
+    core.speed = Math.min(C.SPEED_MAX, core.speed + C.MODES[core.mode].ramp * dt);
     const v = core.speed + boost;
     core.scroll = v * dt; core.dist += core.scroll;
     // difficulty 0..~2: ramps over the first 3 districts, then +0.35 per completed cycle

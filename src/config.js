@@ -2,10 +2,15 @@
 window.NR = window.NR || {};
 NR.cfg = {
   RES: { high: [360, 640], low: [270, 480] },   // internal render size (portrait 9:16)
-  SPEED_START: 60, SPEED_MAX: 150, SPEED_RAMP: 0.55, // m/s, gain per second of play
-  BOOST_ADD: 45, BOOST_SECONDS: 2.2, BOOST_RECHARGE: 6,
+  SPEED_START: 60, SPEED_MAX: 190, SPEED_RAMP: 1.45, // m/s, gain per second of play (PURSUIT; top speed at ~90 s)
+  BOOST_ADD: 60, BOOST_SECONDS: 2.2, BOOST_RECHARGE: 6,
   LANE_X: 18, ALT_MIN: -6, ALT_MAX: 30,           // player box (world units = metres)
-  STEER_SPEED: 26, CLIMB_SPEED: 18,
+  STEER_SPEED: 31, CLIMB_SPEED: 22, STEER_RESP: 14,
+  // run modes: NIGHT DRIVE holds SPEED_START, PURSUIT ramps to SPEED_MAX. Each mode keeps its own best and top runs.
+  MODES: {
+    night: { name: 'NIGHT DRIVE', ramp: 0, best: 'neonRain.best.night', runs: 'neonRain.runs.night' },
+    pursuit: { name: 'PURSUIT', ramp: 1.45, best: 'neonRain.best', runs: 'neonRain.runs' },
+  },
   HULL: 3, INVULN: 1.5,
   NEAR_MISS_DIST: 3.2, NEAR_MISS_POINTS: 250, CHAIN_WINDOW: 2.5,
   SIREN_PER_MISS: 0.12, SIREN_CLEAR: 320,

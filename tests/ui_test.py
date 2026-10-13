@@ -76,7 +76,7 @@ try:
           text: document.getElementById('ui').innerText, ember: NR.ui.ember})""")
         check("title shown (code art fallback)", r["state"] == "TITLE" and r["screen"] == "title" and r["mode"] == "code", r["mode"])
         check("logo NEON/RAIN, no subtitle", r["logo"].split() == ["NEON", "RAIN"] and "SKY" not in r["text"], r["logo"].split())
-        check("footer music + best", r["foot"].startswith("MUSIC: ") and " ·  BEST " in r["foot"], r["foot"])
+        check("footer music + best", r["foot"].startswith("MUSIC: ") and "\nBEST  NIGHT " in r["foot"] and " ·  PURSUIT " in r["foot"], r["foot"])
         page.wait_for_timeout(5500)  # let one ember drag + exhale happen
         shot(page, "ui_title_code.png")
         fps = page.evaluate(FPS_JS)
@@ -90,9 +90,9 @@ try:
         page.evaluate("NR.ui.open('title')")
 
         # ---- menu: keys ----
-        page.keyboard.press("ArrowDown")
+        page.keyboard.press("ArrowDown"); page.keyboard.press("ArrowDown")
         r = page.evaluate("[...document.querySelectorAll('#nru .menu button')].findIndex(b => b.classList.contains('sel'))")
-        check("ArrowDown moves selection", r == 1, r)
+        check("ArrowDown moves selection", r == 2, r)
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
         check("Enter opens BEST RUNS", page.evaluate("NR.ui.screen") == "best" and visible(page, "#nru .panel.on"))
@@ -101,7 +101,7 @@ try:
         check("Escape goes back", page.evaluate("NR.ui.screen") == "title")
 
         # ---- settings by touch ----
-        page.tap("#nru .menu button:nth-child(3)")
+        page.tap("#nru .menu button:nth-child(4)")
         page.wait_for_timeout(200)
         check("tap SETTINGS opens panel", page.evaluate("NR.ui.screen") == "settings")
         box = page.locator("#nru .panel.on .sld").first.bounding_box()
@@ -128,7 +128,7 @@ try:
         check("reset best needs 2 taps", armed == 12345 and r[0] == 0 and r[1] is None, [armed, r])
         shot(page, "ui_settings.png")
         page.tap("#nru .panel.on .back")
-        page.tap("#nru .menu button:nth-child(4)")
+        page.tap("#nru .menu button:nth-child(5)")
         page.wait_for_timeout(200)
         r = page.evaluate("document.querySelector('#nru .panel.on').innerText")
         check("credits text", "JOHN SLAGBOOM" in r and "RAINY SAX" in r and "OLD SCHOOL TEST 1" in r and "THREE.JS" in r, r.replace("\n", " | "))
@@ -136,7 +136,7 @@ try:
         page.tap("#nru .panel.on .back")
 
         # ---- START -> HUD ----
-        page.tap("#nru .menu button:nth-child(1)")
+        page.tap("#nru .menu button:nth-child(2)")
         page.wait_for_timeout(700)
         r = page.evaluate("({s: NR.core.state, scr: NR.ui.screen})")
         check("tap START -> PLAY", r == {"s": "PLAY", "scr": "hud"}, r)
@@ -193,7 +193,7 @@ try:
         page.tap("#nru .dead .big:nth-of-type(2)")
         page.wait_for_timeout(600)
         check("MENU -> TITLE", page.evaluate("NR.core.state + '/' + NR.ui.screen") == "TITLE/title" and visible(page, "#nru .ttl"))
-        page.tap("#nru .menu button:nth-child(2)")
+        page.tap("#nru .menu button:nth-child(3)")
         page.wait_for_timeout(200)
         r = page.evaluate("document.querySelectorAll('#nru .runs tr').length")
         check("best runs lists 2 runs", r == 2, r)

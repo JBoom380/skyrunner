@@ -3,7 +3,6 @@
 (function () {
   window.NR = window.NR || {};
   const C = NR.cfg || {};
-  const RUNS_KEY = 'neonRain.runs';
   const DNAMES = (NR.DISTRICTS || []).map(d => d.name);
   const fmt = n => Math.max(0, Math.floor(n || 0)).toLocaleString('en-US');
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -25,7 +24,7 @@
 #nru .logo{position:absolute;left:.43em;top:5.5%;margin:0;font-size:3.7em;font-weight:bold;letter-spacing:.11em;line-height:.98;color:#f0d8a8;
  text-shadow:0 0 .32em #d9953f,0 0 .06em #fff,0 0 .9em rgba(217,149,63,.45)}
 #nru .logo.buzz{opacity:.72;text-shadow:0 0 .12em #d9953f}
-#nru .menu{position:absolute;left:1.6em;top:57.5%;transition:opacity .25s}
+#nru .menu{position:absolute;left:1.6em;top:52%;transition:opacity .25s}
 #nru .menu button{display:block;height:3.5em;min-width:15em;text-align:left;font-size:1.06em;letter-spacing:.2em;color:#b9a27a;
  text-shadow:0 0 .5em rgba(217,149,63,.55)}
 #nru .menu button i{display:inline-block;width:1.3em;font-style:normal;opacity:0}
@@ -46,6 +45,7 @@
 #nru .runs td.k{color:#8fb0b4;text-align:right}
 #nru .runs .d{display:block;font-size:.78em;color:#9a8a6a;font-weight:normal;text-shadow:none;margin-top:.2em;letter-spacing:.12em}
 #nru .empty{color:#7f8f90;font-size:.8em;letter-spacing:.14em;line-height:1.8}
+#nru .mh{color:#8fb0b4;font-size:.78em;letter-spacing:.22em;margin:1em 0 .2em}
 #nru .row{display:flex;align-items:center;min-height:3.5em;gap:.6em;letter-spacing:.16em}
 #nru .row .lab{width:6em;font-size:.86em;color:#8fb0b4}
 #nru .row.sel .lab{color:#f0d8a8;text-shadow:0 0 .5em #d9953f}
@@ -97,7 +97,7 @@
 #nru .big{display:block;width:13.5em;height:3.5em;margin:.45em 0;border:1px solid rgba(217,160,80,.5)!important;letter-spacing:.24em;color:#e8c890;background:rgba(5,6,9,.4)}
 #nru .big.sel{border-color:#f0d8a8!important;color:#fff;background:rgba(217,149,63,.18);text-shadow:0 0 .6em #d9953f;box-shadow:0 0 .8em rgba(217,149,63,.35)}
 #nru .dead{background:linear-gradient(rgba(5,6,9,.55),rgba(5,6,9,.9) 40%,rgba(5,6,9,.94))}
-#nru .dead h2{color:#c9584a;text-shadow:0 0 .4em #c9584a,0 0 .08em #f0c0b0;margin-bottom:.9em;font-size:1.6em}
+#nru .dead h2{color:#c9584a;text-shadow:0 0 .4em #c9584a,0 0 .08em #f0c0b0;margin-bottom:.9em;font-size:1.45em}
 #nru .fs{font-size:2.6em;font-weight:bold;letter-spacing:.1em;color:#f0d8a8;text-shadow:0 0 .35em #d9953f}
 #nru .nb{margin:.5em 0 0;height:1.4em;font-size:.86em;letter-spacing:.34em;color:#050609;background:#e8c890;padding:.15em .8em 0;box-shadow:0 0 1em #d9953f;visibility:hidden}
 #nru .nb.on{visibility:visible;animation:nruBl .6s steps(2) infinite}
@@ -134,7 +134,7 @@
     h('div', 'shade', null, t);
     E.logo = h('h1', 'logo', 'SKY<br>RUNNER', t);
     E.menu = h('div', 'menu', null, t);
-    E.menuBtns = ['START PURSUIT', 'BEST RUNS', 'SETTINGS', 'CREDITS'].map((s, i) => {
+    E.menuBtns = [C.MODES.night.name, C.MODES.pursuit.name, 'BEST RUNS', 'SETTINGS', 'CREDITS'].map((s, i) => {
       const b = h('button', '', '<i>&#9656;</i>' + s, E.menu); b.dataset.i = i;
       b.addEventListener('pointerdown', () => { if (ui.screen === 'title') setSel(i); });
       b.addEventListener('click', () => { if (ui.screen === 'title') { setSel(i); activate(); } });
@@ -224,7 +224,7 @@
   function resetBest() {
     if (!resetArm) { resetArm = 3; E.setRows[3].btn.classList.add('arm'); E.setRows[3].btn.textContent = 'TAP AGAIN TO CONFIRM'; emit('ui', { action: 'click' }); return; }
     resetArm = 0; if (core) core.best = 0;
-    lsDel(C.BEST_KEY || 'neonRain.best'); lsDel(RUNS_KEY);
+    for (const m of Object.values(C.MODES)) { lsDel(m.best); lsDel(m.runs); }
     E.setRows[3].btn.classList.remove('arm'); E.setRows[3].btn.textContent = 'BEST CLEARED';
     emit('ui', { action: 'confirm' }); paintFoot(true);
   }
@@ -239,22 +239,25 @@
   let setI = 0;
 
   // ---------------------------------------------------------------- runs (top 5)
-  function loadRuns() { const r = lsGet(RUNS_KEY); return Array.isArray(r) ? r : []; }
+  const modeOf = m => C.MODES[m] || C.MODES.pursuit;
+  function loadRuns(m) { const r = lsGet(modeOf(m).runs); return Array.isArray(r) ? r : []; }
   function saveRun(d) {
-    const r = loadRuns(); r.push({ score: d.score | 0, dist: d.dist | 0, district: d.district | 0, loop: d.loop | 0, t: Date.now() });
-    r.sort((a, b) => b.score - a.score); lsSet(RUNS_KEY, r.slice(0, 5));
+    const r = loadRuns(d.mode); r.push({ score: d.score | 0, dist: d.dist | 0, district: d.district | 0, loop: d.loop | 0, t: Date.now() });
+    r.sort((a, b) => b.score - a.score); lsSet(modeOf(d.mode).runs, r.slice(0, 5));
   }
   const dLabel = (d, loop) => 'DISTRICT ' + ((d | 0) + 1) + ' // ' + (DNAMES[d | 0] || '?') + (loop > 0 ? ' // CYCLE ' + ((loop | 0) + 1) : '');
   function paintBest() {
-    const r = loadRuns();
-    if (!r.length) { E.pBest.body.innerHTML = '<div class="empty">NO RUNS ON FILE.<br>FLY A PURSUIT TO SET ONE.</div>'; return; }
-    E.pBest.body.innerHTML = '<table class="runs">' + r.map((x, i) =>
-      `<tr><td class="n">${i + 1}</td><td class="s">${fmt(x.score)}<span class="d">${dLabel(x.district, x.loop)}</span></td><td class="k">${(x.dist / 1000).toFixed(2)} KM</td></tr>`).join('') + '</table>';
+    E.pBest.body.innerHTML = ['night', 'pursuit'].map(m => {
+      const r = loadRuns(m), head = '<div class="mh">' + C.MODES[m].name + '</div>';
+      if (!r.length) return head + '<div class="empty">NO RUNS ON FILE.</div>';
+      return head + '<table class="runs">' + r.map((x, i) =>
+        `<tr><td class="n">${i + 1}</td><td class="s">${fmt(x.score)}<span class="d">${dLabel(x.district, x.loop)}</span></td><td class="k">${(x.dist / 1000).toFixed(2)} KM</td></tr>`).join('') + '</table>';
+    }).join('');
   }
 
   // ---------------------------------------------------------------- navigation
   let menuI = 0, ovI = 0;
-  function setSel(i) { menuI = (i + 4) % 4; E.menuBtns.forEach((b, j) => b.classList.toggle('sel', j === menuI)); }
+  function setSel(i) { const n = E.menuBtns.length; menuI = (i + n) % n; E.menuBtns.forEach((b, j) => b.classList.toggle('sel', j === menuI)); }
   function setOv(btns, i) { ovI = (i + btns.length) % btns.length; btns.forEach((b, j) => b.classList.toggle('sel', j === ovI)); }
   function open(name) {
     if (!built) return;
@@ -270,8 +273,8 @@
     if (!core) return;
     const s = ui.screen;
     if (s === 'title') {
-      if (menuI === 0) { emit('ui', { action: 'start' }); if (NR.audio && NR.audio.unlock) { try { NR.audio.unlock(); } catch (e) {} } core.start(); }
-      else { emit('ui', { action: 'select' }); open(['', 'best', 'settings', 'credits'][menuI]); }
+      if (menuI < 2) { emit('ui', { action: 'start' }); if (NR.audio && NR.audio.unlock) { try { NR.audio.unlock(); } catch (e) {} } core.start(menuI ? 'pursuit' : 'night'); }
+      else { emit('ui', { action: 'select' }); open(['', '', 'best', 'settings', 'credits'][menuI]); }
     } else if (s === 'best' || s === 'credits') back();
     else if (s === 'settings') { const r = E.setRows[setI]; if (!r) back(); else if (r.kind === 'reset') resetBest(); else if (r.kind === 'q') setQ(core.settings.quality === 'high' ? 'low' : 'high'); }
     else if (s === 'pause') E.pauseBtns[ovI].click();
@@ -321,6 +324,7 @@
     if (!lastRun) return;
     const d = lastRun;
     E.fs.textContent = '0'; countT = 0;
+    E.dead.querySelector('h2').textContent = modeOf(d.mode).name + ' ENDED';
     E.nb.classList.toggle('on', !!d.isBest);
     E.st.innerHTML = `<div><span>BEST</span><b>${fmt(d.best)}</b></div><div><span>DISTANCE</span><b>${(d.dist / 1000).toFixed(2)} KM</b></div>` +
       `<div><span>NEAR MISSES</span><b>${d.nearMisses | 0}</b></div><div><span>REACHED</span><b>${(d.district | 0) + 1} // ${DNAMES[d.district | 0] || '?'}${d.loop > 0 ? '<br>CYCLE ' + ((d.loop | 0) + 1) : ''}</b></div>`;
@@ -361,7 +365,8 @@
   let footT = 0, vFoot = '';
   function paintFoot(force) {
     const a = NR.audio, mus = (a && a.nowPlaying) || ((NR.MUSIC && NR.MUSIC[0] && NR.MUSIC[0].title) || '');
-    const s = 'MUSIC: ' + mus + '  ·  BEST ' + fmt(core ? core.best : 0);
+    const bst = m => fmt(+(lsGet(C.MODES[m].best) || {}).score || 0);
+    const s = 'MUSIC: ' + mus + '\nBEST  NIGHT ' + bst('night') + '  ·  PURSUIT ' + bst('pursuit');
     if (force || s !== vFoot) { vFoot = s; E.foot.textContent = s; }
   }
 

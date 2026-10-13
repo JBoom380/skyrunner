@@ -77,15 +77,20 @@
       c.connect(hp); hp.connect(cg); cg.connect(bus);
       return run([n, sub, c], t, 2.8);
     },
-    // boost ignition: low whump + air burst (the sustained roar is a continuous voice)
+    // boost ignition: igniter click, turbine whine spooling 600 -> 2400 Hz, bright air rip, short tight punch
+    // (the sustained jet roar is a continuous voice)
     boost(ctx, out, nb) {
       const t = ctx.currentTime + 0.005;
-      const o = osc(ctx, 'sine', 140), g = gain(ctx, 0); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.35);
-      env(g.gain, t, 0.01, 0.55, 0.38); o.connect(g); g.connect(out);
-      const n = noiseSrc(ctx, nb), bp = filt(ctx, 'bandpass', 500, 0.8), ng = gain(ctx, 0);
-      bp.frequency.setValueAtTime(300, t); bp.frequency.exponentialRampToValueAtTime(2600, t + 0.4);
-      env(ng.gain, t, 0.05, 0.4, 0.45); n.connect(bp); bp.connect(ng); ng.connect(out);
-      return run([o, n], t, 0.55);
+      const cn = noiseSrc(ctx, nb), chp = filt(ctx, 'highpass', 2500, 0.7), cg = gain(ctx, 0);
+      env(cg.gain, t, 0.002, 0.5, 0.03); cn.connect(chp); chp.connect(cg); cg.connect(out);
+      const w = osc(ctx, 'triangle', 600), wg = gain(ctx, 0); w.frequency.setValueAtTime(600, t); w.frequency.exponentialRampToValueAtTime(2400, t + 0.5);
+      env(wg.gain, t, 0.04, 0.13, 0.55); w.connect(wg); wg.connect(out);
+      const n = noiseSrc(ctx, nb), bp = filt(ctx, 'bandpass', 1200, 0.7), ng = gain(ctx, 0);
+      bp.frequency.setValueAtTime(1200, t + 0.02); bp.frequency.exponentialRampToValueAtTime(5200, t + 0.35);
+      env(ng.gain, t + 0.02, 0.03, 0.42, 0.45); n.connect(bp); bp.connect(ng); ng.connect(out);
+      const p = osc(ctx, 'sine', 110), pg = gain(ctx, 0); p.frequency.setValueAtTime(110, t); p.frequency.exponentialRampToValueAtTime(70, t + 0.1);
+      env(pg.gain, t, 0.005, 0.3, 0.12); p.connect(pg); pg.connect(out);
+      return run([cn, w, n, p], t, 0.62);
     },
     // siren: two-tone hi/lo wail for 1 s (two detuned voices through a soft lowpass)
     siren(ctx, out) {
@@ -296,15 +301,19 @@
     L.whineG = gain(ctx, 0); L.whineG.connect(out); L.whine = osc(ctx, 'sine', 900); L.whine.connect(L.whineG);
     L.wind = gain(ctx, 0); L.wind.connect(out); L.windBP = filt(ctx, 'bandpass', 700, 0.6); L.windBP.connect(L.wind);
     L.wn = noiseSrc(ctx, nb, true); L.wn.connect(L.windBP);
-    L.boost = gain(ctx, 0); L.boost.connect(out); L.boostLP = filt(ctx, 'lowpass', 900, 0.9); L.boostLP.connect(L.boost);
-    L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 0.7; L.bn.connect(L.boostLP);
-    L.bo = osc(ctx, 'sawtooth', 70); L.bo.connect(L.boostLP);
+    // boost: jet roar (high-passed noise, no low saw), turbine tone with vibrato, a quiet sine rumble underneath
+    L.boost = gain(ctx, 0); L.boost.connect(out);
+    L.boostHP = filt(ctx, 'highpass', 800, 0.7); L.boostLP = filt(ctx, 'lowpass', 6500, 0.5); L.boostHP.connect(L.boostLP); L.boostLP.connect(L.boost);
+    L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 1.3; L.bnG = gain(ctx, 0.5); L.bn.connect(L.bnG); L.bnG.connect(L.boostHP);
+    L.btG = gain(ctx, 0.1); L.btG.connect(L.boost); L.bt = osc(ctx, 'triangle', 1800); L.bt.connect(L.btG);
+    L.bv = osc(ctx, 'sine', 6.5); L.bvg = gain(ctx, 22); L.bv.connect(L.bvg); L.bvg.connect(L.bt.frequency);
+    L.bsub = gain(ctx, 0.12); L.bsub.connect(L.boost); L.bo = osc(ctx, 'sine', 46); L.bo.connect(L.bsub);
     // drone hum: detuned buzz with a fast rotor tremolo; gain follows how recently a drone spotted the car
     L.drone = gain(ctx, 0); L.drone.connect(out); L.droneAM = gain(ctx, 0.7); L.droneAM.connect(L.drone);
     L.droneLP = filt(ctx, 'lowpass', 700, 3); L.droneLP.connect(L.droneAM);
     L.d1 = osc(ctx, 'sawtooth', 118); L.d2 = osc(ctx, 'sawtooth', 120.5); L.d1.connect(L.droneLP); L.d2.connect(L.droneLP);
     L.dl = osc(ctx, 'sine', 23); L.dlg = gain(ctx, 0.3); L.dl.connect(L.dlg); L.dlg.connect(L.droneAM.gain);
-    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.d1, L.d2, L.dl]) s.start();
+    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.bt, L.bv, L.d1, L.d2, L.dl]) s.start();
     return L;
   }
 
@@ -485,15 +494,18 @@
     const on = live ? 1 : idle ? 0.35 : 0;
     const f = 44 + k * 26 + (b ? 14 : 0) + (p && p.vel && typeof p.vel.y === 'number' ? Math.max(-4, Math.min(4, p.vel.y * 0.25)) : 0);
     loops.o1.frequency.setTargetAtTime(f, t, 0.15); loops.o2.frequency.setTargetAtTime(f * 1.012, t, 0.15); loops.o3.frequency.setTargetAtTime(f * 0.5, t, 0.15);
-    loops.engLP.frequency.setTargetAtTime(380 + k * 500 + (b ? 500 : 0), t, 0.2);
+    loops.engLP.frequency.setTargetAtTime(380 + k * 500 + (b ? 150 : 0), t, 0.2);
     loops.eng.gain.setTargetAtTime(0.065 * on, t, 0.12);
     loops.whine.frequency.setTargetAtTime(700 + k * 900 + (b ? 500 : 0), t, 0.25);
     loops.whineG.gain.setTargetAtTime((0.004 + k * 0.007) * on, t, 0.2);
     loops.windBP.frequency.setTargetAtTime(500 + k * 1600 + (b ? 900 : 0), t, 0.2);
     loops.wind.gain.setTargetAtTime((live ? 0.07 + k * 0.12 + (b ? 0.08 : 0) : idle ? 0.03 : 0), t, 0.2);
-    loops.boostLP.frequency.setTargetAtTime(b && live ? 1400 : 500, t, 0.15);
-    loops.bo.frequency.setTargetAtTime(62 + k * 20, t, 0.2);
-    loops.boost.gain.setTargetAtTime(b && live ? 0.3 : 0, t, b ? 0.06 : 0.25);
+    const bl = b && live;
+    loops.boostHP.frequency.setTargetAtTime(bl ? 900 + k * 500 : 500, t, 0.15);
+    // turbine spools up on boost and winds down after it (gain tail below lets the fall be heard)
+    loops.bt.frequency.setTargetAtTime(bl ? 1700 + k * 900 : 520, t, bl ? 0.12 : 0.22);
+    loops.bo.frequency.setTargetAtTime(42 + k * 10, t, 0.2);
+    loops.boost.gain.setTargetAtTime(bl ? 0.3 : 0, t, b ? 0.06 : 0.25);
     const sp2 = live || idle ? spotted : 0;
     loops.drone.gain.setTargetAtTime(0.11 * sp2, t, sp2 > 0.5 ? 0.05 : 0.2);
     loops.droneLP.frequency.setTargetAtTime(500 + 900 * sp2, t, 0.1);
@@ -505,6 +517,18 @@
     const oc = new OC(1, Math.ceil(44100 * seconds), 44100), b = makeNoise(oc, 2);
     const g = oc.createGain(); g.connect(oc.destination);
     VOICES[name](oc, g, b, o);
+    return oc.startRendering().then(r => r.getChannelData(0));
+  };
+  // test hook: offline boost preview (engine + wind bed, boost held from 0.4 s to 2.4 s, ignition voice at 0.4 s)
+  A._renderBoost = function (seconds = 3.5) {
+    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OC) return Promise.resolve(null);
+    const oc = new OC(1, Math.ceil(44100 * seconds), 44100), nb = makeNoise(oc, 2), g = oc.createGain(); g.gain.value = 0.8; g.connect(oc.destination);
+    const L = makeLoops(oc, g, nb), on = 0.4, off = 2.4;
+    L.eng.gain.value = 0.065; L.wind.gain.value = 0.1; L.whineG.gain.value = 0.006;
+    L.boost.gain.setValueAtTime(0, 0); L.boost.gain.setTargetAtTime(0.3, on, 0.06); L.boost.gain.setTargetAtTime(0, off, 0.25);
+    L.boostHP.frequency.setValueAtTime(500, 0); L.boostHP.frequency.setTargetAtTime(1100, on, 0.15); L.boostHP.frequency.setTargetAtTime(500, off, 0.15);
+    L.bt.frequency.setValueAtTime(520, 0); L.bt.frequency.setTargetAtTime(2000, on, 0.12); L.bt.frequency.setTargetAtTime(520, off, 0.22);
+    oc.suspend(on).then(() => { VOICES.boost(oc, g, nb); oc.resume(); });
     return oc.startRendering().then(r => r.getChannelData(0));
   };
   A._status = function () {

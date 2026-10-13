@@ -3,11 +3,11 @@
   const C = NR.cfg;
   const SPARKS = 48;
   const START_Y = 8;
-  const ROLL_DUR = 0.45, ROLL_DUR_BOOST = 0.35, ROLL_SAFE = 0.3, ROLL_COOL = 1.0, ROLL_BUFFER = 0.15;
+  const ROLL_DUR = 0.3, ROLL_DUR_BOOST = 0.25, ROLL_SAFE = 0.2, ROLL_COOL = 0.5, ROLL_BUFFER = 0.15, ROLL_DIST = 9.5;
 
   let THREE, car, scene, glowTex, glows, sparks, sparkVel, sparkLife, sparkNext = 0;
   let boxObj, tmpN;
-  let rollDur = ROLL_DUR, rollDist = 0, rollDone = 0, rollAngle = 0, rollKind = 'spin', rollBuf = 0;
+  let rollDur = ROLL_DUR, rollDist = 0, rollDone = 0, rollAngle = 0, rollSgn = 1, rollBuf = 0;
   let pushX = 0, pushY = 0, pushVX = 0, pushVY = 0;
   let crashT = 0, crashV = 0, crashVy = 0, spinX = 0, spinZ = 0, sparkClock = 0, boostVis = 0, sirenFull = false;
 
@@ -76,7 +76,7 @@
   function fly(dt, core) {
     const inp = core.input || {};
     const mx = clamp(+inp.mx || 0, -1, 1), my = clamp(+inp.my || 0, -1, 1);
-    const k = 1 - Math.exp(-dt * 7);
+    const k = 1 - Math.exp(-dt * C.STEER_RESP);
     P.vel.x += (mx * C.STEER_SPEED - P.vel.x) * k;
     P.vel.y += (my * C.CLIMB_SPEED - P.vel.y) * k;
     // external pushes: ease toward the impulse, the impulse itself fades
@@ -116,41 +116,40 @@
 
     // pose: bank into turns, nose pitch on climb/dive, yaw toward the stick, hover bob
     const tb = -P.vel.x / C.STEER_SPEED * 0.6;
-    P.bank += (tb - P.bank) * Math.min(1, dt * 9);
-    P.pitch += (P.vel.y / C.CLIMB_SPEED * 0.16 - P.pitch) * Math.min(1, dt * 8);
+    P.bank += (tb - P.bank) * Math.min(1, dt * 14);
+    P.pitch += (P.vel.y / C.CLIMB_SPEED * 0.16 - P.pitch) * Math.min(1, dt * 12);
     const g = car.group;
-    car.setBank(P.bank + (rollKind === 'barrel' ? rollAngle : 0));
-    g.rotation.x = P.pitch + (rollKind === 'loop' ? rollAngle : 0);
-    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1 + (rollKind === 'spin' ? rollAngle : 0);
+    car.setBank(P.bank + rollAngle);
+    g.rotation.x = P.pitch;
+    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1;
     g.position.set(P.pos.x, P.pos.y + Math.sin(core.time * 2.3) * 0.12, P.pos.z);
     g.visible = P.invuln > 0 ? (Math.floor(P.invuln * 14) % 2 === 0) : true;
   }
 
-  // ---------- roll: barrel (left/right), loop (up/down), flat spin (centred) ----------
+  // ---------- roll: always a barrel roll; the dodge follows the stick at any angle (centred = roll in place) ----------
   function roll(dt, inp, mx, my) {
     if (P.rollCooldown > 0 && !P.rolling) P.rollCooldown = Math.max(0, P.rollCooldown - dt);
     if (inp.roll) rollBuf = ROLL_BUFFER; else rollBuf = Math.max(0, rollBuf - dt);
     if (rollBuf > 0 && !P.rolling && P.rollCooldown <= 0) {
       rollBuf = 0;
-      // controls snaps the press direction into rollX/rollY (keys held at the press win); else snap the stick here
+      // controls gives the press direction in rollX/rollY (keys held at the press win); else use the stick here
       const hasDir = typeof inp.rollX === 'number' && typeof inp.rollY === 'number';
       const rx = hasDir ? clamp(inp.rollX, -1, 1) : mx, ry = hasDir ? clamp(inp.rollY, -1, 1) : my;
-      const ax = Math.abs(rx), ay = Math.abs(ry), d = P.rollDir;
-      if (Math.max(ax, ay) < 0.3) { d.x = 0; d.y = 0; } else if (ax >= ay) { d.x = Math.sign(rx); d.y = 0; } else { d.x = 0; d.y = Math.sign(ry); }
+      const len = Math.hypot(rx, ry), d = P.rollDir;
+      if (len < 0.3) { d.x = 0; d.y = 0; } else { d.x = rx / len; d.y = ry / len; }
       const boost = !!P.boosting;
       rollDur = boost ? ROLL_DUR_BOOST : ROLL_DUR;
-      rollDist = (d.y ? 5 : 6) * (boost ? 1.5 : 1) * (d.x || d.y ? 1 : 0);
-      rollKind = d.x ? 'barrel' : d.y ? 'loop' : 'spin';
+      rollDist = ROLL_DIST * (boost ? 1.5 : 1) * (d.x || d.y ? 1 : 0);
+      // barrel: right = -z (same sense as banking right); straight up/down or in place turns left
+      rollSgn = Math.abs(d.x) > 0.05 ? -Math.sign(d.x) : 1;
       P.rolling = true; P.rollT = 0; P.rollCooldown = ROLL_COOL; rollDone = 0;
-      NR.bus.emit('roll', { dir: { x: d.x, y: d.y }, kind: rollKind, boost });
+      NR.bus.emit('roll', { dir: { x: d.x, y: d.y }, kind: 'barrel', boost });
     }
     if (!P.rolling) return;
     P.rollT = Math.min(1, P.rollT + dt / rollDur);
     const e = ease(P.rollT), step = (e - rollDone) * rollDist; rollDone = e;
     P.pos.x += P.rollDir.x * step; P.pos.y += P.rollDir.y * step;
-    // barrel: right = -z (same sense as banking right); loop: up = nose up (+x); spin: turn left (+y)
-    const sgn = rollKind === 'barrel' ? -P.rollDir.x : rollKind === 'loop' ? P.rollDir.y : 1;
-    rollAngle = sgn * Math.PI * 2 * e;
+    rollAngle = rollSgn * Math.PI * 2 * e;
     if (P.rollT >= 1) { P.rolling = false; rollAngle = 0; }
   }
 
@@ -229,11 +228,11 @@
       m.position.set(px, py, pz); m.scale.set(s, s, 1); car.group.add(m); return m;
     };
     glows = {
-      thr: mk(0, -0.35, 4.15, 0x3aa8ff, 3),
-      beacon: mk(0, 1.2, 0.95, 0xffa020, 3),
-      red: mk(-0.76, 1.15, 1.05, 0xff1030, 2.2),
-      blue: mk(0.76, 1.15, 1.05, 0x2050ff, 2.2),
-      pods: [[-1.25, -0.8, -4.25], [1.25, -0.8, -4.25], [-0.95, -0.95, 2.55], [0.95, -0.95, 2.55]].map(([a, b, d]) => mk(a, b, d, 0x3aa8ff, 2.4)),
+      thr: mk(0, -0.14, 3.9, 0x3aa8ff, 3),
+      beacon: mk(0, 1.2, 0.3, 0xfff0d0, 1.6),
+      red: mk(-0.5, 1.18, 0.3, 0xff1030, 2.2),
+      blue: mk(0.5, 1.18, 0.3, 0x2050ff, 2.2),
+      pods: [[-0.98, -0.95, -2.6], [0.98, -0.95, -2.6], [-0.98, -0.95, 2.3], [0.98, -0.95, 2.3]].map(([a, b, d]) => mk(a, b, d, 0x3aa8ff, 2.4)),
     };
   }
 

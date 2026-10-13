@@ -80994,10 +80994,15 @@ return Object.freeze(Object.assign({}, __core, __mod));
 window.NR = window.NR || {};
 NR.cfg = {
   RES: { high: [360, 640], low: [270, 480] },   // internal render size (portrait 9:16)
-  SPEED_START: 60, SPEED_MAX: 150, SPEED_RAMP: 0.55, // m/s, gain per second of play
-  BOOST_ADD: 45, BOOST_SECONDS: 2.2, BOOST_RECHARGE: 6,
+  SPEED_START: 60, SPEED_MAX: 190, SPEED_RAMP: 1.45, // m/s, gain per second of play (PURSUIT; top speed at ~90 s)
+  BOOST_ADD: 60, BOOST_SECONDS: 2.2, BOOST_RECHARGE: 6,
   LANE_X: 18, ALT_MIN: -6, ALT_MAX: 30,           // player box (world units = metres)
-  STEER_SPEED: 26, CLIMB_SPEED: 18,
+  STEER_SPEED: 31, CLIMB_SPEED: 22, STEER_RESP: 14,
+  // run modes: NIGHT DRIVE holds SPEED_START, PURSUIT ramps to SPEED_MAX. Each mode keeps its own best and top runs.
+  MODES: {
+    night: { name: 'NIGHT DRIVE', ramp: 0, best: 'neonRain.best.night', runs: 'neonRain.runs.night' },
+    pursuit: { name: 'PURSUIT', ramp: 1.45, best: 'neonRain.best', runs: 'neonRain.runs' },
+  },
   HULL: 3, INVULN: 1.5,
   NEAR_MISS_DIST: 3.2, NEAR_MISS_POINTS: 250, CHAIN_WINDOW: 2.5,
   SIREN_PER_MISS: 0.12, SIREN_CLEAR: 320,
@@ -81025,122 +81030,122 @@ NR.bus = (() => { const h = {}; return {
 
 </script>
 <script>/* cruiser.js */
-// SKYRUNNER player car: the PATROL hover cruiser (v3, bubble-canopy outrigger design).
+// SKYRUNNER player car: the PATROL 47 spinner (v4, classic wedge police spinner; concept 1, 2026-10-12).
 // buildCruiser(THREE) -> { group, lights, setBank(rad), setBoost(0..1), update(t) }
-// Axes: car faces -Z, +Y up, origin at body centre. Length ~8, width ~2.9.
+// Axes: car faces -Z, +Y up, origin at body centre. Length ~7.7, width ~2.4.
 window.buildCruiser = function (THREE) {
   const g = new THREE.Group();
   const cv = (w, h, draw) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; };
   const add = (m, x = 0, y = 0, z = 0) => { m.position.set(x, y, z); g.add(m); return m; };
+  // side profile as [z, y] points, extruded across the car (width w), chamfered edges
+  const slab = (pts, w, mat, bevel = 0.06) => {
+    const s = new THREE.Shape(); pts.forEach(([z, y], i) => (i ? s.lineTo(-z, y) : s.moveTo(-z, y)));
+    const geo = new THREE.ExtrudeGeometry(s, { depth: w, bevelEnabled: true, bevelSize: bevel, bevelThickness: bevel, bevelSegments: 1, curveSegments: 1 });
+    geo.translate(0, 0, -w / 2); geo.rotateY(Math.PI / 2); geo.computeVertexNormals();
+    return g.add(new THREE.Mesh(geo, mat)), geo;
+  };
 
   // ---- materials ----
-  const paint = new THREE.MeshStandardMaterial({ color: 0x5f8a98, metalness: 0.35, roughness: 0.3 });
-  const paintDk = new THREE.MeshStandardMaterial({ color: 0x3a5560, metalness: 0.4, roughness: 0.38 });
-  const black = new THREE.MeshStandardMaterial({ color: 0x0b0e10, metalness: 0.3, roughness: 0.7 });
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xe6eef5, metalness: 1, roughness: 0.15 });
-  const tyre = new THREE.MeshStandardMaterial({ color: 0x15191c, metalness: 0.2, roughness: 0.8 });
-  const glass = new THREE.MeshPhysicalMaterial({ color: 0x0d1c26, metalness: 0.1, roughness: 0.03, clearcoat: 1, transparent: true, opacity: 0.82, iridescence: 1, iridescenceIOR: 1.6 });
+  const body = new THREE.MeshStandardMaterial({ color: 0x55707c, metalness: 0.4, roughness: 0.34 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xe8ebe6, metalness: 0.2, roughness: 0.35 });
+  const black = new THREE.MeshStandardMaterial({ color: 0x0a0c0e, metalness: 0.3, roughness: 0.7 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xd8e2ea, metalness: 1, roughness: 0.18 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x0b161e, metalness: 0.2, roughness: 0.04, clearcoat: 1 });
   const em = (c, i = 3) => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: i, roughness: 0.4 });
-  const cyan = em(0x40f0ff, 2.5), red = em(0xc21a22, 1.4), white = em(0xfff4e0, 4), blueThr = em(0x3aa8ff, 5), amber = em(0xffa020, 5), blue = em(0x2a70ff, 5);
+  const cyan = em(0x40f0ff, 3), red = em(0xd81c26, 2.2), head = em(0xfff4e0, 4), blueThr = em(0x3aa8ff, 5);
 
   // ---- decals ----
-  const caution = cv(128, 16, (c, w, h) => { c.fillStyle = '#f2c400'; c.fillRect(0, 0, w, h); c.fillStyle = '#111'; for (let x = -16; x < w; x += 16) { c.beginPath(); c.moveTo(x, h); c.lineTo(x + 8, 0); c.lineTo(x + 16, 0); c.lineTo(x + 8, h); c.fill(); } });
-  const side = cv(512, 128, (c, w, h) => {
-    c.clearRect(0, 0, w, h); c.fillStyle = '#f4f6f8'; c.font = 'bold 54px Arial'; c.textBaseline = 'middle';
-    c.fillText('PATROL', 150, 40); c.font = 'bold 60px Arial'; c.fillText('207', 165, 98);
-    c.fillStyle = '#d4202a'; c.fillRect(395, 22, 54, 54); c.fillStyle = '#fff'; c.font = 'bold 22px Arial'; c.fillText('巡', 410, 50);
-    c.fillStyle = '#f4f6f8'; c.font = 'bold 15px Arial'; c.fillText('UNIT 7  AUTH. B', 12, 112); c.fillText('NO STEP', 12, 20);
+  const door = cv(512, 160, (c, w, h) => {
+    c.fillStyle = '#e8ebe6'; c.fillRect(0, 0, w, h); c.fillStyle = '#0b0d0f'; c.fillRect(0, h - 10, w, 10);
+    c.font = 'bold 128px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('47', w * 0.5, h * 0.48);
+    c.font = 'bold 20px Arial'; c.textAlign = 'left'; c.fillText('PATROL', 14, 24);
   });
-  const num = cv(128, 128, (c, w, h) => { c.clearRect(0, 0, w, h); c.fillStyle = '#f4f6f8'; c.font = 'bold 96px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('47', 64, 68); });
-  const decal = (t, w, h) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2 }));
+  const roofNum = cv(256, 128, (c, w, h) => { c.clearRect(0, 0, w, h); c.fillStyle = '#0b0d0f'; c.font = 'bold 110px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('47', w / 2, h * 0.54); });
+  const decal = (t, w, h) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.45, polygonOffset: true, polygonOffsetFactor: -2 }));
 
-  // ---- fuselage: long rounded teardrop ----
-  const fus = new THREE.Mesh(new THREE.CapsuleGeometry(0.85, 4.2, 10, 24), paint);
-  fus.rotation.x = Math.PI / 2; fus.scale.set(1.3, 1, 0.82); add(fus, 0, 0, 0.4);
-  const hump = new THREE.Mesh(new THREE.CapsuleGeometry(0.7, 1.6, 8, 20), paint);
-  hump.rotation.x = Math.PI / 2 - 0.12; hump.scale.set(1.25, 1, 0.9); add(hump, 0, 0.42, 2.0);
-  const tailCap = new THREE.Mesh(new THREE.SphereGeometry(0.95, 20, 14), paintDk); tailCap.scale.set(1.15, 0.85, 0.7); add(tailCap, 0, 0.25, 3.45);
-  const band = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.06, 8, 32), chrome); band.scale.set(1.18, 0.95, 1); add(band, 0, 0.2, 2.3);
-
-  // ---- bubble canopy ----
-  const can = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), glass);
-  can.scale.set(0.98, 0.78, 2.05); add(can, 0, 0.42, -0.55);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 6, 40), chrome); rim.rotation.x = Math.PI / 2; rim.scale.set(0.99, 2.06, 1); add(rim, 0, 0.43, -0.55);
-  const spine = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 6, 40, Math.PI), black); spine.rotation.y = Math.PI / 2; spine.scale.set(2.05, 0.79, 1); add(spine, 0, 0.42, -0.55);
-  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.35), black), s * 0.38, 0.65, -0.1);
-  add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 0.4), em(0x20e0ff, 1.6)), 0, 0.55, -1.5);
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.2), em(0xffa020, 1.4)), 0, 0.58, -1.25);
-
-  // ---- side pods with caution stripes and markings ----
+  // ---- wedge body: knife nose, long sloped hood, flat deck, cut-off tail ----
+  slab([[-4.0, -0.05], [-4.05, -0.3], [-3.8, -0.55], [3.3, -0.55], [3.6, -0.35], [3.6, 0.38], [2.6, 0.45], [-0.9, 0.38]], 2.3, body);
+  // ---- greenhouse: raked screen, flat roof, fastback ----
+  slab([[-1.0, 0.36], [-0.05, 0.95], [1.4, 0.95], [2.6, 0.44], [2.6, 0.36]], 1.72, glass, 0.04);
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.06, 1.42), white), 0, 0.98, 0.68);
+  const rn = decal(roofNum, 1.0, 0.5); rn.rotation.x = -Math.PI / 2; add(rn, 0, 1.015, 1.12);
   for (const s of [-1, 1]) {
-    const pod = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 3.6, 6, 14), paintDk); pod.rotation.x = Math.PI / 2; pod.scale.set(1.2, 1, 1); add(pod, s * 1.12, -0.38, 0.2);
-    const st = decal(caution, 1.4, 0.16); st.rotation.y = s * Math.PI / 2; add(st, s * 1.49, -0.3, -0.4);
-    const sd = decal(side, 2.4, 0.6); sd.rotation.y = s * Math.PI / 2; add(sd, s * 1.11, 0.25, 0.9);
-    const nm = decal(num, 0.75, 0.75); nm.rotation.y = s * Math.PI / 2; add(nm, s * 1.06, 0.55, 2.55);
-    for (const z of [-1.0, 0.0, 1.0]) add(new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.5), black), s * 1.47, -0.42, z);
+    // B-pillar and white door panel with the unit number
+    const bp = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.22), white); bp.rotation.x = -0.15; add(bp, s * 0.86, 0.66, 0.7);
+    const d = decal(door, 2.0, 0.62); d.rotation.y = s * Math.PI / 2; add(d, s * 1.215, -0.02, 0.55);
+    // low red pinstripe nose to tail, black sill
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 7.4), red), s * 1.22, -0.13, -0.2);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.14, 7.0), black), s * 1.2, -0.5, -0.2);
+    // mirror
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.16), black), s * 1.0, 0.5, -0.75);
   }
+  // twin white hood stripes along the slope
+  for (const s of [-1, 1]) { const st = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 3.0), white); st.rotation.x = -0.135; add(st, s * 0.32, 0.19, -2.4); }
+  // hood vents
+  for (const z of [-1.6, -1.35]) add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.03, 0.08), black), 0, 0.33, z);
 
-  // ---- front outriggers: long booms ending in big wheel pods ----
+  // ---- rear spoiler ----
+  add(new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.06, 0.42), body), 0, 0.72, 3.3);
+  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.28, 0.2), black), s * 0.75, 0.56, 3.3);
+
+  // ---- roof light bar: red left, blue right, white takedown centre ----
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.62, 0.1, 0.32), black), 0, 1.06, 0.3);
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.03, 0.26), chrome), 0, 1.0, 0.3);
+  const cells = [];
+  for (const [x, c] of [[-0.68, 0xff1030], [-0.44, 0xff1030], [-0.2, 0xff1030], [0.2, 0x2050ff], [0.44, 0x2050ff], [0.68, 0x2050ff]]) {
+    cells.push(add(new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.11, 0.24), em(c, 5)), x, 1.15, 0.3));
+  }
+  const take = add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.2), em(0xfff4e0, 2)), 0, 1.14, 0.3);
+
+  // ---- hover pods where the wheels would be: black skirts, cyan rings, downward fans ----
   const fans = [];
-  for (const s of [-1, 1]) {
-    const boom = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 2.6, 6, 12), paint); boom.rotation.x = Math.PI / 2; add(boom, s * 1.2, -0.42, -2.6);
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.7), paintDk), s * 1.1, -0.38, -1.35);
-    const wheel = new THREE.Group(); wheel.position.set(s * 1.25, -0.42, -4.25); g.add(wheel);
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.62, 28), paint); drum.rotation.z = Math.PI / 2; wheel.add(drum);
-    const tread = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.1, 8, 36), tyre); tread.rotation.y = Math.PI / 2; wheel.add(tread);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.66, 20, 12, 0, Math.PI), paintDk); cap.rotation.y = -s * Math.PI / 2; cap.scale.set(1, 1, 0.45); cap.position.x = s * 0.3; wheel.add(cap);
-    const hub = new THREE.Mesh(new THREE.CircleGeometry(0.28, 20), cyan); hub.rotation.y = s * Math.PI / 2; hub.position.x = s * 0.6; wheel.add(hub);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.035, 6, 30), em(0xbff8ff, 2)); ring.rotation.y = Math.PI / 2; ring.position.x = s * 0.33; wheel.add(ring);
-    const fan = new THREE.Mesh(new THREE.CircleGeometry(0.55, 20), blueThr); fan.rotation.x = Math.PI / 2; fan.position.y = -0.33; wheel.add(fan); fans.push(fan);
-  }
-  // ---- rear wheel pods under the tail ----
-  for (const s of [-1, 1]) {
-    const rw = new THREE.Group(); rw.position.set(s * 0.95, -0.62, 2.55); g.add(rw);
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.5, 24), tyre); drum.rotation.z = Math.PI / 2; rw.add(drum);
-    const hub = new THREE.Mesh(new THREE.CircleGeometry(0.24, 16), cyan); hub.rotation.y = s * Math.PI / 2; hub.position.x = s * 0.26; rw.add(hub);
-    const fender = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.58, 20, 1, false, 0, Math.PI), paint); fender.rotation.set(0, Math.PI / 2, Math.PI / 2); rw.add(fender);
-    const fan = new THREE.Mesh(new THREE.CircleGeometry(0.45, 18), blueThr); fan.rotation.x = Math.PI / 2; fan.position.y = -0.3; rw.add(fan); fans.push(fan);
+  for (const [s, z] of [[-1, -2.6], [1, -2.6], [-1, 2.3], [1, 2.3]]) {
+    const pod = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.7, 6, 12), black); pod.rotation.x = Math.PI / 2; add(pod, s * 0.98, -0.6, z);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.045, 6, 28), cyan); ring.rotation.x = Math.PI / 2; add(ring, s * 0.98, -0.82, z);
+    const fan = new THREE.Mesh(new THREE.CircleGeometry(0.36, 20), blueThr.clone()); fan.rotation.x = Math.PI / 2; add(fan, s * 0.98, -0.84, z); fans.push(fan);
   }
 
-  // ---- roof beacon rack ----
-  add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.42), black), 0, 1.08, 0.95);
-  add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.3), chrome), 0, 1.0, 0.95);
-  const beacons = [];
-  for (const [x, z, m] of [[-0.6, 0.85, amber], [-0.32, 1.05, blue], [-0.05, 0.85, amber], [0.22, 1.05, blue], [0.5, 0.85, amber], [0.64, 1.1, amber]]) {
-    beacons.push(add(new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.clone()), x, 1.15, z));
-  }
-  const lr = add(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.18), red.clone()), -0.76, 1.15, 1.05);
-  const lb = add(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.18), blue.clone()), 0.76, 1.15, 1.05);
+  // ---- tail: full-width red bar, round thruster with a red rim ----
+  const tailM = em(0xff2030, 6);
+  const tail = add(new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.12, 0.05), tailM), 0, 0.24, 3.69);
+  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.05), tailM), s * 0.86, 0.04, 3.69);
+  add(new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.05, 8, 28), red), 0, -0.14, 3.69);
+  const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.3, 20, 1, true), chrome); noz.rotation.x = Math.PI / 2; add(noz, 0, -0.14, 3.56);
+  const core = add(new THREE.Mesh(new THREE.CircleGeometry(0.29, 20), blueThr), 0, -0.14, 3.72);
+  // ---- afterburner plume: blue outer cone, white inner core, shock diamonds; grows from the nozzle with boost ----
+  const glowM = c => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const plume = new THREE.Group(); add(plume, 0, -0.14, 3.74);
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.3, 3, 14, 1, true), glowM(0x3aa8ff)); flame.rotation.x = Math.PI / 2; flame.position.z = 1.5; plume.add(flame);
+  const inner = new THREE.Mesh(new THREE.ConeGeometry(0.15, 2, 12, 1, true), glowM(0xe6f8ff)); inner.rotation.x = Math.PI / 2; inner.position.z = 1.0; plume.add(inner);
+  const diamonds = [0.45, 0.95, 1.45, 1.95].map(z => { const d = new THREE.Mesh(new THREE.OctahedronGeometry(0.15, 0), glowM(0xf4fbff)); d.scale.set(1, 1, 1.7); d.position.z = z; plume.add(d); return d; });
 
-  // ---- rear lights + main thruster ----
-  const tail = add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.06), red), 0, 0.45, 4.1);
-  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.06), red), s * 0.95, 0.15, 3.95);
-  add(decal(caution, 1.3, 0.12), 0, -0.05, 4.13);
-  const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.4, 16, 1, true), chrome); noz.rotation.x = Math.PI / 2; add(noz, 0, -0.35, 3.85);
-  const core = add(new THREE.Mesh(new THREE.CircleGeometry(0.27, 16), blueThr), 0, -0.35, 4.06);
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.28, 2.4, 10, 1, true), new THREE.MeshBasicMaterial({ color: 0x7fd8ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-  flame.rotation.x = -Math.PI / 2; add(flame, 0, -0.35, 5.3);
-
-  // ---- headlights ----
-  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.05), white), s * 1.1, -0.32, -1.72);
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.05, 0.05), white), 0, -0.2, -2.2);
+  // ---- nose: slim headlight strip and corner lamps ----
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 0.05), head), 0, -0.17, -4.02);
+  for (const s of [-1, 1]) add(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.06), head), s * 0.9, -0.22, -3.92);
 
   // ---- fill lights that travel with the car ----
   const fill = new THREE.PointLight(0xff60e0, 26, 12); fill.position.set(-2.4, 2.4, 2.5); g.add(fill);
   const fill2 = new THREE.PointLight(0x50e8ff, 26, 12); fill2.position.set(2.6, 2.0, -1.5); g.add(fill2);
   const top = new THREE.PointLight(0xc8d8ff, 24, 9); top.position.set(0, 3.4, 1.5); g.add(top);
 
-  const lights = { red: lr, blue: lb, pods: fans, flame, core, tail, beacons };
+  const lights = { red: cells[0], blue: cells[5], pods: fans, flame, core, tail, beacons: cells };
   let boost = 0;
   return {
     group: g, lights,
     setBank(r) { g.rotation.z = r; },
-    setBoost(b) { boost = b; flame.material.opacity = 0.75 * b; flame.scale.set(1, 0.6 + b, 1); core.material.emissiveIntensity = 5 + 6 * b; },
+    setBoost(b) {
+      boost = b; plume.visible = b > 0.01; plume.scale.set(0.8 + 0.3 * b, 0.8 + 0.3 * b, 0.4 + 1.1 * b);
+      flame.material.opacity = 0.6 * b; inner.material.opacity = 0.85 * b;
+      diamonds.forEach((d, i) => { d.material.opacity = b * (1 - i * 0.2); });
+      core.material.emissiveIntensity = 5 + 6 * b;
+    },
     update(t) {
-      const ph = Math.floor(t * 6);
-      lr.material.emissiveIntensity = ph % 2 ? 0.6 : 7; lb.material.emissiveIntensity = ph % 2 ? 7 : 0.6;
-      beacons.forEach((b, i) => { b.material.emissiveIntensity = (ph + i) % 3 === 0 ? 1 : 7; });
+      // red and blue halves alternate; inside each half the cells chase outward
+      const ph = Math.floor(t * 6) % 2, ch = Math.floor(t * 18) % 3;
+      cells.forEach((c, i) => { const left = i < 3, k = left ? 2 - i : i - 3; c.material.emissiveIntensity = (left ? !ph : ph) ? (k === ch ? 9 : 5) : 0.5; });
+      take.material.emissiveIntensity = Math.floor(t * 3) % 4 === 0 ? 5 : 1.5;
       for (const f of fans) f.material.emissiveIntensity = 4 + Math.sin(t * 40) * 0.6 + boost * 3;
+      if (boost > 0.01) diamonds.forEach((d, i) => { const k = 1 + Math.sin(t * 47 + i * 1.7) * 0.18; d.scale.set(k, k, 1.7 * k); });
     },
   };
 };
@@ -81226,15 +81231,20 @@ window.buildCruiser = function (THREE) {
       c.connect(hp); hp.connect(cg); cg.connect(bus);
       return run([n, sub, c], t, 2.8);
     },
-    // boost ignition: low whump + air burst (the sustained roar is a continuous voice)
+    // boost ignition: igniter click, turbine whine spooling 600 -> 2400 Hz, bright air rip, short tight punch
+    // (the sustained jet roar is a continuous voice)
     boost(ctx, out, nb) {
       const t = ctx.currentTime + 0.005;
-      const o = osc(ctx, 'sine', 140), g = gain(ctx, 0); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.35);
-      env(g.gain, t, 0.01, 0.55, 0.38); o.connect(g); g.connect(out);
-      const n = noiseSrc(ctx, nb), bp = filt(ctx, 'bandpass', 500, 0.8), ng = gain(ctx, 0);
-      bp.frequency.setValueAtTime(300, t); bp.frequency.exponentialRampToValueAtTime(2600, t + 0.4);
-      env(ng.gain, t, 0.05, 0.4, 0.45); n.connect(bp); bp.connect(ng); ng.connect(out);
-      return run([o, n], t, 0.55);
+      const cn = noiseSrc(ctx, nb), chp = filt(ctx, 'highpass', 2500, 0.7), cg = gain(ctx, 0);
+      env(cg.gain, t, 0.002, 0.5, 0.03); cn.connect(chp); chp.connect(cg); cg.connect(out);
+      const w = osc(ctx, 'triangle', 600), wg = gain(ctx, 0); w.frequency.setValueAtTime(600, t); w.frequency.exponentialRampToValueAtTime(2400, t + 0.5);
+      env(wg.gain, t, 0.04, 0.13, 0.55); w.connect(wg); wg.connect(out);
+      const n = noiseSrc(ctx, nb), bp = filt(ctx, 'bandpass', 1200, 0.7), ng = gain(ctx, 0);
+      bp.frequency.setValueAtTime(1200, t + 0.02); bp.frequency.exponentialRampToValueAtTime(5200, t + 0.35);
+      env(ng.gain, t + 0.02, 0.03, 0.42, 0.45); n.connect(bp); bp.connect(ng); ng.connect(out);
+      const p = osc(ctx, 'sine', 110), pg = gain(ctx, 0); p.frequency.setValueAtTime(110, t); p.frequency.exponentialRampToValueAtTime(70, t + 0.1);
+      env(pg.gain, t, 0.005, 0.3, 0.12); p.connect(pg); pg.connect(out);
+      return run([cn, w, n, p], t, 0.62);
     },
     // siren: two-tone hi/lo wail for 1 s (two detuned voices through a soft lowpass)
     siren(ctx, out) {
@@ -81445,15 +81455,19 @@ window.buildCruiser = function (THREE) {
     L.whineG = gain(ctx, 0); L.whineG.connect(out); L.whine = osc(ctx, 'sine', 900); L.whine.connect(L.whineG);
     L.wind = gain(ctx, 0); L.wind.connect(out); L.windBP = filt(ctx, 'bandpass', 700, 0.6); L.windBP.connect(L.wind);
     L.wn = noiseSrc(ctx, nb, true); L.wn.connect(L.windBP);
-    L.boost = gain(ctx, 0); L.boost.connect(out); L.boostLP = filt(ctx, 'lowpass', 900, 0.9); L.boostLP.connect(L.boost);
-    L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 0.7; L.bn.connect(L.boostLP);
-    L.bo = osc(ctx, 'sawtooth', 70); L.bo.connect(L.boostLP);
+    // boost: jet roar (high-passed noise, no low saw), turbine tone with vibrato, a quiet sine rumble underneath
+    L.boost = gain(ctx, 0); L.boost.connect(out);
+    L.boostHP = filt(ctx, 'highpass', 800, 0.7); L.boostLP = filt(ctx, 'lowpass', 6500, 0.5); L.boostHP.connect(L.boostLP); L.boostLP.connect(L.boost);
+    L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 1.3; L.bnG = gain(ctx, 0.5); L.bn.connect(L.bnG); L.bnG.connect(L.boostHP);
+    L.btG = gain(ctx, 0.1); L.btG.connect(L.boost); L.bt = osc(ctx, 'triangle', 1800); L.bt.connect(L.btG);
+    L.bv = osc(ctx, 'sine', 6.5); L.bvg = gain(ctx, 22); L.bv.connect(L.bvg); L.bvg.connect(L.bt.frequency);
+    L.bsub = gain(ctx, 0.12); L.bsub.connect(L.boost); L.bo = osc(ctx, 'sine', 46); L.bo.connect(L.bsub);
     // drone hum: detuned buzz with a fast rotor tremolo; gain follows how recently a drone spotted the car
     L.drone = gain(ctx, 0); L.drone.connect(out); L.droneAM = gain(ctx, 0.7); L.droneAM.connect(L.drone);
     L.droneLP = filt(ctx, 'lowpass', 700, 3); L.droneLP.connect(L.droneAM);
     L.d1 = osc(ctx, 'sawtooth', 118); L.d2 = osc(ctx, 'sawtooth', 120.5); L.d1.connect(L.droneLP); L.d2.connect(L.droneLP);
     L.dl = osc(ctx, 'sine', 23); L.dlg = gain(ctx, 0.3); L.dl.connect(L.dlg); L.dlg.connect(L.droneAM.gain);
-    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.d1, L.d2, L.dl]) s.start();
+    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.bt, L.bv, L.d1, L.d2, L.dl]) s.start();
     return L;
   }
 
@@ -81634,15 +81648,18 @@ window.buildCruiser = function (THREE) {
     const on = live ? 1 : idle ? 0.35 : 0;
     const f = 44 + k * 26 + (b ? 14 : 0) + (p && p.vel && typeof p.vel.y === 'number' ? Math.max(-4, Math.min(4, p.vel.y * 0.25)) : 0);
     loops.o1.frequency.setTargetAtTime(f, t, 0.15); loops.o2.frequency.setTargetAtTime(f * 1.012, t, 0.15); loops.o3.frequency.setTargetAtTime(f * 0.5, t, 0.15);
-    loops.engLP.frequency.setTargetAtTime(380 + k * 500 + (b ? 500 : 0), t, 0.2);
+    loops.engLP.frequency.setTargetAtTime(380 + k * 500 + (b ? 150 : 0), t, 0.2);
     loops.eng.gain.setTargetAtTime(0.065 * on, t, 0.12);
     loops.whine.frequency.setTargetAtTime(700 + k * 900 + (b ? 500 : 0), t, 0.25);
     loops.whineG.gain.setTargetAtTime((0.004 + k * 0.007) * on, t, 0.2);
     loops.windBP.frequency.setTargetAtTime(500 + k * 1600 + (b ? 900 : 0), t, 0.2);
     loops.wind.gain.setTargetAtTime((live ? 0.07 + k * 0.12 + (b ? 0.08 : 0) : idle ? 0.03 : 0), t, 0.2);
-    loops.boostLP.frequency.setTargetAtTime(b && live ? 1400 : 500, t, 0.15);
-    loops.bo.frequency.setTargetAtTime(62 + k * 20, t, 0.2);
-    loops.boost.gain.setTargetAtTime(b && live ? 0.3 : 0, t, b ? 0.06 : 0.25);
+    const bl = b && live;
+    loops.boostHP.frequency.setTargetAtTime(bl ? 900 + k * 500 : 500, t, 0.15);
+    // turbine spools up on boost and winds down after it (gain tail below lets the fall be heard)
+    loops.bt.frequency.setTargetAtTime(bl ? 1700 + k * 900 : 520, t, bl ? 0.12 : 0.22);
+    loops.bo.frequency.setTargetAtTime(42 + k * 10, t, 0.2);
+    loops.boost.gain.setTargetAtTime(bl ? 0.3 : 0, t, b ? 0.06 : 0.25);
     const sp2 = live || idle ? spotted : 0;
     loops.drone.gain.setTargetAtTime(0.11 * sp2, t, sp2 > 0.5 ? 0.05 : 0.2);
     loops.droneLP.frequency.setTargetAtTime(500 + 900 * sp2, t, 0.1);
@@ -81654,6 +81671,18 @@ window.buildCruiser = function (THREE) {
     const oc = new OC(1, Math.ceil(44100 * seconds), 44100), b = makeNoise(oc, 2);
     const g = oc.createGain(); g.connect(oc.destination);
     VOICES[name](oc, g, b, o);
+    return oc.startRendering().then(r => r.getChannelData(0));
+  };
+  // test hook: offline boost preview (engine + wind bed, boost held from 0.4 s to 2.4 s, ignition voice at 0.4 s)
+  A._renderBoost = function (seconds = 3.5) {
+    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OC) return Promise.resolve(null);
+    const oc = new OC(1, Math.ceil(44100 * seconds), 44100), nb = makeNoise(oc, 2), g = oc.createGain(); g.gain.value = 0.8; g.connect(oc.destination);
+    const L = makeLoops(oc, g, nb), on = 0.4, off = 2.4;
+    L.eng.gain.value = 0.065; L.wind.gain.value = 0.1; L.whineG.gain.value = 0.006;
+    L.boost.gain.setValueAtTime(0, 0); L.boost.gain.setTargetAtTime(0.3, on, 0.06); L.boost.gain.setTargetAtTime(0, off, 0.25);
+    L.boostHP.frequency.setValueAtTime(500, 0); L.boostHP.frequency.setTargetAtTime(1100, on, 0.15); L.boostHP.frequency.setTargetAtTime(500, off, 0.15);
+    L.bt.frequency.setValueAtTime(520, 0); L.bt.frequency.setTargetAtTime(2000, on, 0.12); L.bt.frequency.setTargetAtTime(520, off, 0.22);
+    oc.suspend(on).then(() => { VOICES.boost(oc, g, nb); oc.resume(); });
     return oc.startRendering().then(r => r.getChannelData(0));
   };
   A._status = function () {
@@ -83445,11 +83474,11 @@ void main(){ vZ = position.z;
   const C = NR.cfg;
   const SPARKS = 48;
   const START_Y = 8;
-  const ROLL_DUR = 0.45, ROLL_DUR_BOOST = 0.35, ROLL_SAFE = 0.3, ROLL_COOL = 1.0, ROLL_BUFFER = 0.15;
+  const ROLL_DUR = 0.3, ROLL_DUR_BOOST = 0.25, ROLL_SAFE = 0.2, ROLL_COOL = 0.5, ROLL_BUFFER = 0.15, ROLL_DIST = 9.5;
 
   let THREE, car, scene, glowTex, glows, sparks, sparkVel, sparkLife, sparkNext = 0;
   let boxObj, tmpN;
-  let rollDur = ROLL_DUR, rollDist = 0, rollDone = 0, rollAngle = 0, rollKind = 'spin', rollBuf = 0;
+  let rollDur = ROLL_DUR, rollDist = 0, rollDone = 0, rollAngle = 0, rollSgn = 1, rollBuf = 0;
   let pushX = 0, pushY = 0, pushVX = 0, pushVY = 0;
   let crashT = 0, crashV = 0, crashVy = 0, spinX = 0, spinZ = 0, sparkClock = 0, boostVis = 0, sirenFull = false;
 
@@ -83518,7 +83547,7 @@ void main(){ vZ = position.z;
   function fly(dt, core) {
     const inp = core.input || {};
     const mx = clamp(+inp.mx || 0, -1, 1), my = clamp(+inp.my || 0, -1, 1);
-    const k = 1 - Math.exp(-dt * 7);
+    const k = 1 - Math.exp(-dt * C.STEER_RESP);
     P.vel.x += (mx * C.STEER_SPEED - P.vel.x) * k;
     P.vel.y += (my * C.CLIMB_SPEED - P.vel.y) * k;
     // external pushes: ease toward the impulse, the impulse itself fades
@@ -83558,41 +83587,40 @@ void main(){ vZ = position.z;
 
     // pose: bank into turns, nose pitch on climb/dive, yaw toward the stick, hover bob
     const tb = -P.vel.x / C.STEER_SPEED * 0.6;
-    P.bank += (tb - P.bank) * Math.min(1, dt * 9);
-    P.pitch += (P.vel.y / C.CLIMB_SPEED * 0.16 - P.pitch) * Math.min(1, dt * 8);
+    P.bank += (tb - P.bank) * Math.min(1, dt * 14);
+    P.pitch += (P.vel.y / C.CLIMB_SPEED * 0.16 - P.pitch) * Math.min(1, dt * 12);
     const g = car.group;
-    car.setBank(P.bank + (rollKind === 'barrel' ? rollAngle : 0));
-    g.rotation.x = P.pitch + (rollKind === 'loop' ? rollAngle : 0);
-    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1 + (rollKind === 'spin' ? rollAngle : 0);
+    car.setBank(P.bank + rollAngle);
+    g.rotation.x = P.pitch;
+    g.rotation.y = -P.vel.x / C.STEER_SPEED * 0.1;
     g.position.set(P.pos.x, P.pos.y + Math.sin(core.time * 2.3) * 0.12, P.pos.z);
     g.visible = P.invuln > 0 ? (Math.floor(P.invuln * 14) % 2 === 0) : true;
   }
 
-  // ---------- roll: barrel (left/right), loop (up/down), flat spin (centred) ----------
+  // ---------- roll: always a barrel roll; the dodge follows the stick at any angle (centred = roll in place) ----------
   function roll(dt, inp, mx, my) {
     if (P.rollCooldown > 0 && !P.rolling) P.rollCooldown = Math.max(0, P.rollCooldown - dt);
     if (inp.roll) rollBuf = ROLL_BUFFER; else rollBuf = Math.max(0, rollBuf - dt);
     if (rollBuf > 0 && !P.rolling && P.rollCooldown <= 0) {
       rollBuf = 0;
-      // controls snaps the press direction into rollX/rollY (keys held at the press win); else snap the stick here
+      // controls gives the press direction in rollX/rollY (keys held at the press win); else use the stick here
       const hasDir = typeof inp.rollX === 'number' && typeof inp.rollY === 'number';
       const rx = hasDir ? clamp(inp.rollX, -1, 1) : mx, ry = hasDir ? clamp(inp.rollY, -1, 1) : my;
-      const ax = Math.abs(rx), ay = Math.abs(ry), d = P.rollDir;
-      if (Math.max(ax, ay) < 0.3) { d.x = 0; d.y = 0; } else if (ax >= ay) { d.x = Math.sign(rx); d.y = 0; } else { d.x = 0; d.y = Math.sign(ry); }
+      const len = Math.hypot(rx, ry), d = P.rollDir;
+      if (len < 0.3) { d.x = 0; d.y = 0; } else { d.x = rx / len; d.y = ry / len; }
       const boost = !!P.boosting;
       rollDur = boost ? ROLL_DUR_BOOST : ROLL_DUR;
-      rollDist = (d.y ? 5 : 6) * (boost ? 1.5 : 1) * (d.x || d.y ? 1 : 0);
-      rollKind = d.x ? 'barrel' : d.y ? 'loop' : 'spin';
+      rollDist = ROLL_DIST * (boost ? 1.5 : 1) * (d.x || d.y ? 1 : 0);
+      // barrel: right = -z (same sense as banking right); straight up/down or in place turns left
+      rollSgn = Math.abs(d.x) > 0.05 ? -Math.sign(d.x) : 1;
       P.rolling = true; P.rollT = 0; P.rollCooldown = ROLL_COOL; rollDone = 0;
-      NR.bus.emit('roll', { dir: { x: d.x, y: d.y }, kind: rollKind, boost });
+      NR.bus.emit('roll', { dir: { x: d.x, y: d.y }, kind: 'barrel', boost });
     }
     if (!P.rolling) return;
     P.rollT = Math.min(1, P.rollT + dt / rollDur);
     const e = ease(P.rollT), step = (e - rollDone) * rollDist; rollDone = e;
     P.pos.x += P.rollDir.x * step; P.pos.y += P.rollDir.y * step;
-    // barrel: right = -z (same sense as banking right); loop: up = nose up (+x); spin: turn left (+y)
-    const sgn = rollKind === 'barrel' ? -P.rollDir.x : rollKind === 'loop' ? P.rollDir.y : 1;
-    rollAngle = sgn * Math.PI * 2 * e;
+    rollAngle = rollSgn * Math.PI * 2 * e;
     if (P.rollT >= 1) { P.rolling = false; rollAngle = 0; }
   }
 
@@ -83671,11 +83699,11 @@ void main(){ vZ = position.z;
       m.position.set(px, py, pz); m.scale.set(s, s, 1); car.group.add(m); return m;
     };
     glows = {
-      thr: mk(0, -0.35, 4.15, 0x3aa8ff, 3),
-      beacon: mk(0, 1.2, 0.95, 0xffa020, 3),
-      red: mk(-0.76, 1.15, 1.05, 0xff1030, 2.2),
-      blue: mk(0.76, 1.15, 1.05, 0x2050ff, 2.2),
-      pods: [[-1.25, -0.8, -4.25], [1.25, -0.8, -4.25], [-0.95, -0.95, 2.55], [0.95, -0.95, 2.55]].map(([a, b, d]) => mk(a, b, d, 0x3aa8ff, 2.4)),
+      thr: mk(0, -0.14, 3.9, 0x3aa8ff, 3),
+      beacon: mk(0, 1.2, 0.3, 0xfff0d0, 1.6),
+      red: mk(-0.5, 1.18, 0.3, 0xff1030, 2.2),
+      blue: mk(0.5, 1.18, 0.3, 0x2050ff, 2.2),
+      pods: [[-0.98, -0.95, -2.6], [0.98, -0.95, -2.6], [-0.98, -0.95, 2.3], [0.98, -0.95, 2.3]].map(([a, b, d]) => mk(a, b, d, 0x3aa8ff, 2.4)),
     };
   }
 
@@ -84026,8 +84054,19 @@ void main(){ vZ = position.z;
     for (const r of RINGS) { r.t = -r.delay; r.x = pp.x; r.y = pp.y + 0.6; r.z0 = pp.z - 3; }
   }
 
+  // ---------- boost ignition: core flash, particle shock ring behind the thruster, small camera kick ----------
+  function boostIgnite() {
+    if (!carWorld(0, -0.14, 4.0, v1)) return;
+    pools.add.spawn(v1.x, v1.y, v1.z, 0, 0, 20, 0.25, 3, 8, 0xebede6, 0x7ab3b8, 1, 0, 0, 0.5);
+    const n = Math.round(18 * quality());
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2;
+      pools.add.spawn(v1.x, v1.y, v1.z + 0.5, Math.cos(a) * 13, Math.sin(a) * 13, 18, 0.3, 0.7, 1.5, 0xebede6, 0x38737d, 0.9, 0, 0, 0.4); }
+    if (core && core.shake) core.shake(0.22, 0.14);
+    if (core && core.flash) core.flash(0x7ab3b8, 0.14, 0.22);
+  }
+
   // ---------- emitters tied to the car ----------
-  const PODS = [[-1.25, -0.85, -4.25], [1.25, -0.85, -4.25], [-0.95, -1.0, 2.55], [0.95, -1.0, 2.55]];
+  const PODS = [[-0.98, -0.9, -2.6], [0.98, -0.9, -2.6], [-0.98, -0.9, 2.3], [0.98, -0.9, 2.3]];
   let shimAcc = 0, boostAcc = 0, wreckAcc = 0, boostOn = false;
   function carWorld(lx, ly, lz, out) {
     const car = NR.player && NR.player.car && NR.player.car.group;
@@ -84110,7 +84149,7 @@ void main(){ vZ = position.z;
     CARRY = 1;
   }
   function rollStart(dir, boost) {
-    rollFxT = boost ? 0.35 : 0.45; ribBoost = boost ? 1 : 0;
+    rollFxT = boost ? 0.25 : 0.3; ribBoost = boost ? 1 : 0;
     rollWhoosh(dir, boost);
   }
 
@@ -84189,7 +84228,7 @@ void main(){ vZ = position.z;
           const p = d && d.pos && typeof d.pos.x === 'number' ? d.pos : pp; const side = p.x > pp.x ? -1 : 1;
           nearMissFx(p.x, p.y, Math.min(p.z, pp.z + 2), side); });
         bus.on('siren', () => { if (ready) sirenPulse(); });
-        bus.on('boost', (d) => { boostOn = !!(d && d.on); if (boostOn && ready) { const p = playerPos(v1); pools.add.spawn(p.x, p.y - 0.3, p.z + 4.5, 0, 0, 20, 0.25, 3, 8, 0xebede6, 0x7ab3b8, 1, 0, 0, 0.5); } });
+        bus.on('boost', (d) => { boostOn = !!(d && d.on); if (boostOn && ready) boostIgnite(); });
         bus.on('roll', (d) => { if (!ready) return; lastRollEvt = core.time || 0; rollStart(d && d.dir, !!(d && d.boost)); });
         // lightning strikes (sea wall): ring on warn, bolt on active. World may also call fx.strike directly.
         bus.on('hazard', (d) => { if (!ready || !d || !fx.autoLightning || !/lightning|bolt|strike/i.test(d.kind || '') || !d.pos) return;
@@ -84244,7 +84283,7 @@ void main(){ vZ = position.z;
       spdU.uOff.value = (spdU.uOff.value + vel * 1.5 * dt) % 1e5;
       spdU.uAlpha.value = fx.speedLevel * (boosting ? 0.95 : 0.6); spdU.uLen.value = 8 + vel * 0.12;
       spd.visible = fx.speedLevel > 0.02;
-      if (boosting) { spdU.uColor.value.setHex(0xf5d69e); spdU.uColor2.value.setHex(0xdb994d); }
+      if (boosting) { spdU.uColor.value.setHex(0xebede6); spdU.uColor2.value.setHex(0x7ab3b8); }
       else { spdU.uColor.value.setHex(0xebede6); spdU.uColor2.value.setHex(0x7ab3b8); }
 
       // ---- thruster shimmer + boost exhaust ----
@@ -84256,9 +84295,9 @@ void main(){ vZ = position.z;
         if (boosting) {
           boostAcc += dt * 70 * q;
           while (boostAcc >= 1) { boostAcc -= 1;
-            if (carWorld(rnd(-0.15, 0.15), -0.35 + rnd(-0.1, 0.1), 4.3, v0)) {
-              pools.add.spawn(v0.x, v0.y, v0.z, rnd(-1, 1), rnd(-1, 1), rnd(25, 45), rnd(0.1, 0.18), 0.9, 0.4, 0xebede6, 0xdb994d, 0.9, 1, 0, 0.7);
-              if (Math.random() < 0.35) pools.lines.spawn(v0.x + rnd(-1.6, 1.6), v0.y + rnd(-0.6, 0.6), v0.z + 1, 0, 0, rnd(30, 60), rnd(0.12, 0.25), 0xdb994d, 0, 0.06);
+            if (carWorld(rnd(-0.12, 0.12), -0.14 + rnd(-0.08, 0.08), 3.9, v0)) {
+              pools.add.spawn(v0.x, v0.y, v0.z, rnd(-1, 1), rnd(-1, 1), rnd(25, 45), rnd(0.1, 0.18), 0.9, 0.4, 0xebede6, 0x7ab3b8, 0.9, 1, 0, 0.7);
+              if (Math.random() < 0.35) pools.lines.spawn(v0.x + rnd(-1.6, 1.6), v0.y + rnd(-0.6, 0.6), v0.z + 1, 0, 0, rnd(30, 60), rnd(0.12, 0.25), 0x7ab3b8, 0, 0.06);
             } }
         }
       }
@@ -84358,7 +84397,7 @@ void main(){ vZ = position.z;
 // SKYRUNNER controls: floating touch stick + BOOST/ROLL/SIREN buttons, keyboard, gamepad -> NR.controls.state. See SPEC.md.
 (function () {
   window.NR = window.NR || {};
-  const DEAD = 0.12, PAD_DEAD = 0.15, KEY_RATE = 7, ROLL_BUF = 0.18; // a roll pressed this close to the end of the cooldown fires when it ends
+  const DEAD = 0.08, PAD_DEAD = 0.15, KEY_RATE = 7, ROLL_BUF = 0.18; // a roll pressed this close to the end of the cooldown fires when it ends
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
   const state = { mx: 0, my: 0, boost: false, siren: false, roll: false, rollX: 0, rollY: 0, pause: false, any: false };
@@ -84376,7 +84415,7 @@ void main(){ vZ = position.z;
     const k = clamp(w / 390, 0.75, 1.6);
     const safeB = safeBottom();
     L.k = k; L.w = w; L.h = h;
-    L.R = Math.round(60 * k);
+    L.R = Math.round(45 * k);
     L.br = Math.round(50 * k); L.rr = Math.max(32, Math.round(36 * k)); L.sr = Math.round(37 * k);
     L.bx = w - Math.round(26 * k) - L.br; L.by = h - Math.round(42 * k) - safeB - L.br;
     // ROLL sits up-left of BOOST on the thumb's arc (slide from BOOST, or tap with a second finger); SIREN above ROLL
@@ -84689,12 +84728,12 @@ void main(){ vZ = position.z;
       if (!play) rollBuf = 0;
       else if (cd <= (core.dt || dt || 0.016)) {
         state.roll = true; rollBuf = 0;
-        // rollX/rollY: press direction snapped to 4 ways (0,0 = spin in place). Held keys win, so a tap of R toward a
+        // rollX/rollY: press direction as a unit vector at any angle (0,0 = roll in place). Held keys win, so a tap of R toward a
         // just-pressed arrow is not lost to the eased keyboard axis; the stick value is nudged the same way for this frame.
         let x = state.mx, y = state.my;
         if (rollKX || rollKY) { x = rollKX; y = rollKY; state.mx = clamp(state.mx + rollKX, -1, 1); state.my = clamp(state.my + rollKY, -1, 1); }
-        const ax = Math.abs(x), ay = Math.abs(y);
-        state.rollX = ax >= ay && ax > 0.3 ? Math.sign(x) : 0; state.rollY = ay > ax && ay > 0.3 ? Math.sign(y) : 0;
+        const len = Math.hypot(x, y);
+        state.rollX = len > 0.3 ? x / len : 0; state.rollY = len > 0.3 ? y / len : 0;
       } else rollBuf -= dt || 0.016;
     }
     if (rollBuf <= 0) { rollBuf = 0; rollKX = rollKY = 0; }
@@ -84749,7 +84788,6 @@ void main(){ vZ = position.z;
 (function () {
   window.NR = window.NR || {};
   const C = NR.cfg || {};
-  const RUNS_KEY = 'neonRain.runs';
   const DNAMES = (NR.DISTRICTS || []).map(d => d.name);
   const fmt = n => Math.max(0, Math.floor(n || 0)).toLocaleString('en-US');
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -84771,7 +84809,7 @@ void main(){ vZ = position.z;
 #nru .logo{position:absolute;left:.43em;top:5.5%;margin:0;font-size:3.7em;font-weight:bold;letter-spacing:.11em;line-height:.98;color:#f0d8a8;
  text-shadow:0 0 .32em #d9953f,0 0 .06em #fff,0 0 .9em rgba(217,149,63,.45)}
 #nru .logo.buzz{opacity:.72;text-shadow:0 0 .12em #d9953f}
-#nru .menu{position:absolute;left:1.6em;top:57.5%;transition:opacity .25s}
+#nru .menu{position:absolute;left:1.6em;top:52%;transition:opacity .25s}
 #nru .menu button{display:block;height:3.5em;min-width:15em;text-align:left;font-size:1.06em;letter-spacing:.2em;color:#b9a27a;
  text-shadow:0 0 .5em rgba(217,149,63,.55)}
 #nru .menu button i{display:inline-block;width:1.3em;font-style:normal;opacity:0}
@@ -84792,6 +84830,7 @@ void main(){ vZ = position.z;
 #nru .runs td.k{color:#8fb0b4;text-align:right}
 #nru .runs .d{display:block;font-size:.78em;color:#9a8a6a;font-weight:normal;text-shadow:none;margin-top:.2em;letter-spacing:.12em}
 #nru .empty{color:#7f8f90;font-size:.8em;letter-spacing:.14em;line-height:1.8}
+#nru .mh{color:#8fb0b4;font-size:.78em;letter-spacing:.22em;margin:1em 0 .2em}
 #nru .row{display:flex;align-items:center;min-height:3.5em;gap:.6em;letter-spacing:.16em}
 #nru .row .lab{width:6em;font-size:.86em;color:#8fb0b4}
 #nru .row.sel .lab{color:#f0d8a8;text-shadow:0 0 .5em #d9953f}
@@ -84843,7 +84882,7 @@ void main(){ vZ = position.z;
 #nru .big{display:block;width:13.5em;height:3.5em;margin:.45em 0;border:1px solid rgba(217,160,80,.5)!important;letter-spacing:.24em;color:#e8c890;background:rgba(5,6,9,.4)}
 #nru .big.sel{border-color:#f0d8a8!important;color:#fff;background:rgba(217,149,63,.18);text-shadow:0 0 .6em #d9953f;box-shadow:0 0 .8em rgba(217,149,63,.35)}
 #nru .dead{background:linear-gradient(rgba(5,6,9,.55),rgba(5,6,9,.9) 40%,rgba(5,6,9,.94))}
-#nru .dead h2{color:#c9584a;text-shadow:0 0 .4em #c9584a,0 0 .08em #f0c0b0;margin-bottom:.9em;font-size:1.6em}
+#nru .dead h2{color:#c9584a;text-shadow:0 0 .4em #c9584a,0 0 .08em #f0c0b0;margin-bottom:.9em;font-size:1.45em}
 #nru .fs{font-size:2.6em;font-weight:bold;letter-spacing:.1em;color:#f0d8a8;text-shadow:0 0 .35em #d9953f}
 #nru .nb{margin:.5em 0 0;height:1.4em;font-size:.86em;letter-spacing:.34em;color:#050609;background:#e8c890;padding:.15em .8em 0;box-shadow:0 0 1em #d9953f;visibility:hidden}
 #nru .nb.on{visibility:visible;animation:nruBl .6s steps(2) infinite}
@@ -84880,7 +84919,7 @@ void main(){ vZ = position.z;
     h('div', 'shade', null, t);
     E.logo = h('h1', 'logo', 'SKY<br>RUNNER', t);
     E.menu = h('div', 'menu', null, t);
-    E.menuBtns = ['START PURSUIT', 'BEST RUNS', 'SETTINGS', 'CREDITS'].map((s, i) => {
+    E.menuBtns = [C.MODES.night.name, C.MODES.pursuit.name, 'BEST RUNS', 'SETTINGS', 'CREDITS'].map((s, i) => {
       const b = h('button', '', '<i>&#9656;</i>' + s, E.menu); b.dataset.i = i;
       b.addEventListener('pointerdown', () => { if (ui.screen === 'title') setSel(i); });
       b.addEventListener('click', () => { if (ui.screen === 'title') { setSel(i); activate(); } });
@@ -84970,7 +85009,7 @@ void main(){ vZ = position.z;
   function resetBest() {
     if (!resetArm) { resetArm = 3; E.setRows[3].btn.classList.add('arm'); E.setRows[3].btn.textContent = 'TAP AGAIN TO CONFIRM'; emit('ui', { action: 'click' }); return; }
     resetArm = 0; if (core) core.best = 0;
-    lsDel(C.BEST_KEY || 'neonRain.best'); lsDel(RUNS_KEY);
+    for (const m of Object.values(C.MODES)) { lsDel(m.best); lsDel(m.runs); }
     E.setRows[3].btn.classList.remove('arm'); E.setRows[3].btn.textContent = 'BEST CLEARED';
     emit('ui', { action: 'confirm' }); paintFoot(true);
   }
@@ -84985,22 +85024,25 @@ void main(){ vZ = position.z;
   let setI = 0;
 
   // ---------------------------------------------------------------- runs (top 5)
-  function loadRuns() { const r = lsGet(RUNS_KEY); return Array.isArray(r) ? r : []; }
+  const modeOf = m => C.MODES[m] || C.MODES.pursuit;
+  function loadRuns(m) { const r = lsGet(modeOf(m).runs); return Array.isArray(r) ? r : []; }
   function saveRun(d) {
-    const r = loadRuns(); r.push({ score: d.score | 0, dist: d.dist | 0, district: d.district | 0, loop: d.loop | 0, t: Date.now() });
-    r.sort((a, b) => b.score - a.score); lsSet(RUNS_KEY, r.slice(0, 5));
+    const r = loadRuns(d.mode); r.push({ score: d.score | 0, dist: d.dist | 0, district: d.district | 0, loop: d.loop | 0, t: Date.now() });
+    r.sort((a, b) => b.score - a.score); lsSet(modeOf(d.mode).runs, r.slice(0, 5));
   }
   const dLabel = (d, loop) => 'DISTRICT ' + ((d | 0) + 1) + ' // ' + (DNAMES[d | 0] || '?') + (loop > 0 ? ' // CYCLE ' + ((loop | 0) + 1) : '');
   function paintBest() {
-    const r = loadRuns();
-    if (!r.length) { E.pBest.body.innerHTML = '<div class="empty">NO RUNS ON FILE.<br>FLY A PURSUIT TO SET ONE.</div>'; return; }
-    E.pBest.body.innerHTML = '<table class="runs">' + r.map((x, i) =>
-      `<tr><td class="n">${i + 1}</td><td class="s">${fmt(x.score)}<span class="d">${dLabel(x.district, x.loop)}</span></td><td class="k">${(x.dist / 1000).toFixed(2)} KM</td></tr>`).join('') + '</table>';
+    E.pBest.body.innerHTML = ['night', 'pursuit'].map(m => {
+      const r = loadRuns(m), head = '<div class="mh">' + C.MODES[m].name + '</div>';
+      if (!r.length) return head + '<div class="empty">NO RUNS ON FILE.</div>';
+      return head + '<table class="runs">' + r.map((x, i) =>
+        `<tr><td class="n">${i + 1}</td><td class="s">${fmt(x.score)}<span class="d">${dLabel(x.district, x.loop)}</span></td><td class="k">${(x.dist / 1000).toFixed(2)} KM</td></tr>`).join('') + '</table>';
+    }).join('');
   }
 
   // ---------------------------------------------------------------- navigation
   let menuI = 0, ovI = 0;
-  function setSel(i) { menuI = (i + 4) % 4; E.menuBtns.forEach((b, j) => b.classList.toggle('sel', j === menuI)); }
+  function setSel(i) { const n = E.menuBtns.length; menuI = (i + n) % n; E.menuBtns.forEach((b, j) => b.classList.toggle('sel', j === menuI)); }
   function setOv(btns, i) { ovI = (i + btns.length) % btns.length; btns.forEach((b, j) => b.classList.toggle('sel', j === ovI)); }
   function open(name) {
     if (!built) return;
@@ -85016,8 +85058,8 @@ void main(){ vZ = position.z;
     if (!core) return;
     const s = ui.screen;
     if (s === 'title') {
-      if (menuI === 0) { emit('ui', { action: 'start' }); if (NR.audio && NR.audio.unlock) { try { NR.audio.unlock(); } catch (e) {} } core.start(); }
-      else { emit('ui', { action: 'select' }); open(['', 'best', 'settings', 'credits'][menuI]); }
+      if (menuI < 2) { emit('ui', { action: 'start' }); if (NR.audio && NR.audio.unlock) { try { NR.audio.unlock(); } catch (e) {} } core.start(menuI ? 'pursuit' : 'night'); }
+      else { emit('ui', { action: 'select' }); open(['', '', 'best', 'settings', 'credits'][menuI]); }
     } else if (s === 'best' || s === 'credits') back();
     else if (s === 'settings') { const r = E.setRows[setI]; if (!r) back(); else if (r.kind === 'reset') resetBest(); else if (r.kind === 'q') setQ(core.settings.quality === 'high' ? 'low' : 'high'); }
     else if (s === 'pause') E.pauseBtns[ovI].click();
@@ -85067,6 +85109,7 @@ void main(){ vZ = position.z;
     if (!lastRun) return;
     const d = lastRun;
     E.fs.textContent = '0'; countT = 0;
+    E.dead.querySelector('h2').textContent = modeOf(d.mode).name + ' ENDED';
     E.nb.classList.toggle('on', !!d.isBest);
     E.st.innerHTML = `<div><span>BEST</span><b>${fmt(d.best)}</b></div><div><span>DISTANCE</span><b>${(d.dist / 1000).toFixed(2)} KM</b></div>` +
       `<div><span>NEAR MISSES</span><b>${d.nearMisses | 0}</b></div><div><span>REACHED</span><b>${(d.district | 0) + 1} // ${DNAMES[d.district | 0] || '?'}${d.loop > 0 ? '<br>CYCLE ' + ((d.loop | 0) + 1) : ''}</b></div>`;
@@ -85107,7 +85150,8 @@ void main(){ vZ = position.z;
   let footT = 0, vFoot = '';
   function paintFoot(force) {
     const a = NR.audio, mus = (a && a.nowPlaying) || ((NR.MUSIC && NR.MUSIC[0] && NR.MUSIC[0].title) || '');
-    const s = 'MUSIC: ' + mus + '  ·  BEST ' + fmt(core ? core.best : 0);
+    const bst = m => fmt(+(lsGet(C.MODES[m].best) || {}).score || 0);
+    const s = 'MUSIC: ' + mus + '\nBEST  NIGHT ' + bst('night') + '  ·  PURSUIT ' + bst('pursuit');
     if (force || s !== vFoot) { vFoot = s; E.foot.textContent = s; }
   }
 
@@ -85437,14 +85481,14 @@ void main(){ vZ = position.z;
   const core = NR.core = {
     THREE, scene, camera, renderer, settings, isTouch, time: 0, dt: 0, state: 'TITLE',
     input: { mx: 0, my: 0, boost: false, siren: false, pause: false },
-    speed: 0, scroll: 0, dist: 0, score: 0, difficulty: 0, fogExtra: 0, best: +(safeLoad(C.BEST_KEY).score || 0), nearMisses: 0,
+    speed: 0, scroll: 0, dist: 0, score: 0, difficulty: 0, fogExtra: 0, best: +(safeLoad(C.MODES.pursuit.best).score || 0), mode: 'pursuit', nearMisses: 0,
     district: 0, blend: { a: 0, b: 0, t: 0 }, loop: 0, view: null,
     camOffset: new THREE.Vector3(0, 4.2, 13.5), lookDrop: 17, // camera above/behind; look below the car so it rides at mid-screen, above the thumb controls
     shake(a, s) { shakeA = Math.max(shakeA, a); shakeT = Math.max(shakeT, s); },
     flash(hex, s, a = 0.6) { flashC.setHex(hex); flashT = flashMax = s; flashA = a; },
     saveSettings() { try { localStorage.setItem(C.SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} },
     setQuality(q) { settings.quality = q; core.saveSettings(); setRes(); },
-    start() { startRun(); }, toTitle() { setState('TITLE'); }, pause(on) { if (core.state === 'PLAY' && on) setState('PAUSE'); else if (core.state === 'PAUSE' && !on) setState('PLAY'); },
+    start(mode) { if (C.MODES[mode]) core.mode = mode; core.best = +(safeLoad(C.MODES[core.mode].best).score || 0); startRun(); }, toTitle() { setState('TITLE'); }, pause(on) { if (core.state === 'PLAY' && on) setState('PAUSE'); else if (core.state === 'PAUSE' && !on) setState('PLAY'); },
   };
   let shakeA = 0, shakeT = 0, flashT = 0, flashMax = 1, flashA = 0; const flashC = new THREE.Color();
   setRes();
@@ -85474,15 +85518,15 @@ void main(){ vZ = position.z;
   NR.bus.on('crash', () => {
     if (core.state !== 'PLAY') return;
     const best = Math.max(core.best, Math.floor(core.score)); const isBest = best > core.best; core.best = best;
-    try { localStorage.setItem(C.BEST_KEY, JSON.stringify({ score: best })); } catch (e) {}
+    try { localStorage.setItem(C.MODES[core.mode].best, JSON.stringify({ score: best })); } catch (e) {}
     setState('DEAD');
-    NR.bus.emit('runEnd', { score: Math.floor(core.score), best, isBest, dist: Math.floor(core.dist), nearMisses: core.nearMisses, district: core.district, loop: core.loop });
+    NR.bus.emit('runEnd', { mode: core.mode, score: Math.floor(core.score), best, isBest, dist: Math.floor(core.dist), nearMisses: core.nearMisses, district: core.district, loop: core.loop });
   });
 
   function updateRun(dt) {
     const p = NR.player;
     const boost = p && p.boosting ? C.BOOST_ADD : 0;
-    core.speed = Math.min(C.SPEED_MAX, core.speed + C.SPEED_RAMP * dt);
+    core.speed = Math.min(C.SPEED_MAX, core.speed + C.MODES[core.mode].ramp * dt);
     const v = core.speed + boost;
     core.scroll = v * dt; core.dist += core.scroll;
     // difficulty 0..~2: ramps over the first 3 districts, then +0.35 per completed cycle

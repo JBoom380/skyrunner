@@ -291,8 +291,19 @@
     for (const r of RINGS) { r.t = -r.delay; r.x = pp.x; r.y = pp.y + 0.6; r.z0 = pp.z - 3; }
   }
 
+  // ---------- boost ignition: core flash, particle shock ring behind the thruster, small camera kick ----------
+  function boostIgnite() {
+    if (!carWorld(0, -0.14, 4.0, v1)) return;
+    pools.add.spawn(v1.x, v1.y, v1.z, 0, 0, 20, 0.25, 3, 8, 0xebede6, 0x7ab3b8, 1, 0, 0, 0.5);
+    const n = Math.round(18 * quality());
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2;
+      pools.add.spawn(v1.x, v1.y, v1.z + 0.5, Math.cos(a) * 13, Math.sin(a) * 13, 18, 0.3, 0.7, 1.5, 0xebede6, 0x38737d, 0.9, 0, 0, 0.4); }
+    if (core && core.shake) core.shake(0.22, 0.14);
+    if (core && core.flash) core.flash(0x7ab3b8, 0.14, 0.22);
+  }
+
   // ---------- emitters tied to the car ----------
-  const PODS = [[-1.25, -0.85, -4.25], [1.25, -0.85, -4.25], [-0.95, -1.0, 2.55], [0.95, -1.0, 2.55]];
+  const PODS = [[-0.98, -0.9, -2.6], [0.98, -0.9, -2.6], [-0.98, -0.9, 2.3], [0.98, -0.9, 2.3]];
   let shimAcc = 0, boostAcc = 0, wreckAcc = 0, boostOn = false;
   function carWorld(lx, ly, lz, out) {
     const car = NR.player && NR.player.car && NR.player.car.group;
@@ -375,7 +386,7 @@
     CARRY = 1;
   }
   function rollStart(dir, boost) {
-    rollFxT = boost ? 0.35 : 0.45; ribBoost = boost ? 1 : 0;
+    rollFxT = boost ? 0.25 : 0.3; ribBoost = boost ? 1 : 0;
     rollWhoosh(dir, boost);
   }
 
@@ -454,7 +465,7 @@
           const p = d && d.pos && typeof d.pos.x === 'number' ? d.pos : pp; const side = p.x > pp.x ? -1 : 1;
           nearMissFx(p.x, p.y, Math.min(p.z, pp.z + 2), side); });
         bus.on('siren', () => { if (ready) sirenPulse(); });
-        bus.on('boost', (d) => { boostOn = !!(d && d.on); if (boostOn && ready) { const p = playerPos(v1); pools.add.spawn(p.x, p.y - 0.3, p.z + 4.5, 0, 0, 20, 0.25, 3, 8, 0xebede6, 0x7ab3b8, 1, 0, 0, 0.5); } });
+        bus.on('boost', (d) => { boostOn = !!(d && d.on); if (boostOn && ready) boostIgnite(); });
         bus.on('roll', (d) => { if (!ready) return; lastRollEvt = core.time || 0; rollStart(d && d.dir, !!(d && d.boost)); });
         // lightning strikes (sea wall): ring on warn, bolt on active. World may also call fx.strike directly.
         bus.on('hazard', (d) => { if (!ready || !d || !fx.autoLightning || !/lightning|bolt|strike/i.test(d.kind || '') || !d.pos) return;
@@ -509,7 +520,7 @@
       spdU.uOff.value = (spdU.uOff.value + vel * 1.5 * dt) % 1e5;
       spdU.uAlpha.value = fx.speedLevel * (boosting ? 0.95 : 0.6); spdU.uLen.value = 8 + vel * 0.12;
       spd.visible = fx.speedLevel > 0.02;
-      if (boosting) { spdU.uColor.value.setHex(0xf5d69e); spdU.uColor2.value.setHex(0xdb994d); }
+      if (boosting) { spdU.uColor.value.setHex(0xebede6); spdU.uColor2.value.setHex(0x7ab3b8); }
       else { spdU.uColor.value.setHex(0xebede6); spdU.uColor2.value.setHex(0x7ab3b8); }
 
       // ---- thruster shimmer + boost exhaust ----
@@ -521,9 +532,9 @@
         if (boosting) {
           boostAcc += dt * 70 * q;
           while (boostAcc >= 1) { boostAcc -= 1;
-            if (carWorld(rnd(-0.15, 0.15), -0.35 + rnd(-0.1, 0.1), 4.3, v0)) {
-              pools.add.spawn(v0.x, v0.y, v0.z, rnd(-1, 1), rnd(-1, 1), rnd(25, 45), rnd(0.1, 0.18), 0.9, 0.4, 0xebede6, 0xdb994d, 0.9, 1, 0, 0.7);
-              if (Math.random() < 0.35) pools.lines.spawn(v0.x + rnd(-1.6, 1.6), v0.y + rnd(-0.6, 0.6), v0.z + 1, 0, 0, rnd(30, 60), rnd(0.12, 0.25), 0xdb994d, 0, 0.06);
+            if (carWorld(rnd(-0.12, 0.12), -0.14 + rnd(-0.08, 0.08), 3.9, v0)) {
+              pools.add.spawn(v0.x, v0.y, v0.z, rnd(-1, 1), rnd(-1, 1), rnd(25, 45), rnd(0.1, 0.18), 0.9, 0.4, 0xebede6, 0x7ab3b8, 0.9, 1, 0, 0.7);
+              if (Math.random() < 0.35) pools.lines.spawn(v0.x + rnd(-1.6, 1.6), v0.y + rnd(-0.6, 0.6), v0.z + 1, 0, 0, rnd(30, 60), rnd(0.12, 0.25), 0x7ab3b8, 0, 0.06);
             } }
         }
       }
