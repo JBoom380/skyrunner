@@ -9,6 +9,7 @@ Every ~2800 m the city changes district, then the cycle repeats faster: 1 NEON C
 
 ## Legal rules (hard)
 Original names only. Never write "Blade Runner", "Deckard", "spinner", "Tyrell", "replicant", "Voight-Kampff", real brands or logos anywhere (code, UI, comments). Made-up sign words only (see examples in mockups/preview.html: NEXA, OMNI, KIRA, SOMA, LUX, ネオン, 夢, 酒 ...). The car is "the cruiser" / "PATROL 47".
+Exception (John, 11/2/2026): the PURSUIT target is named Runaway Replicant.
 
 ## Files and load order (classic scripts, global `window.NR`; no modules, no network)
 1. `vendor/three.global.js` (THREE r186, done)  2. `config.js` (done: `NR.cfg`, `NR.PALETTE`, `NR.DISTRICTS`, `NR.MUSIC`, `NR.ASSET`, `NR.TITLE_ART`, `NR.rng`, `NR.bus`)

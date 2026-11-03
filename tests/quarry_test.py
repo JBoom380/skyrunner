@@ -115,21 +115,21 @@ try:
         pg.evaluate(LOG_JS)
         pg.evaluate(WAIT_JS, 1500)
         check("pursuit: quarry active", pg.evaluate("NR.quarry.active === true && NR.core.mode === 'pursuit'"))
-        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(2, 9, 12), 8)")  # pin it for a repeatable framing
+        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(2, 9, 75), 8)")  # pin it for a repeatable framing
         pg.evaluate(WAIT_JS, 600)
-        pg.screenshot(path=os.path.join(OUT, "quarry_ahead.png"))
+        pg.screenshot(path=os.path.join(OUT, "quarry_far.png"))
         pg.evaluate("clearInterval(window.__pose)")
         pg.evaluate(WAIT_JS, 38500)
         g = pg.evaluate("window.__g")
         gs = [r[0] for r in g]
         print("gap over 40 s: min %.1f max %.1f mean %.1f samples %d" % (min(gs), max(gs), sum(gs) / len(gs), len(gs)))
-        check("pursuit: gap stays in 4..32 m", min(gs) >= 3.99 and max(gs) <= 32.01, "%.1f..%.1f" % (min(gs), max(gs)))
-        check("pursuit: always ahead (gap > 4 on average)", sum(gs) / len(gs) > 6)
+        check("pursuit: gap stays in 20..130 m", min(gs) >= 19.99 and max(gs) <= 130.01, "%.1f..%.1f" % (min(gs), max(gs)))
+        check("pursuit: rests far ahead (mean gap 50..100 m)", 50 < sum(gs) / len(gs) < 100, "mean %.1f" % (sum(gs) / len(gs)))
         check("pursuit: HUD tag visible", pg.evaluate("document.getElementById('nrq').style.display") == "block")
         pg.screenshot(path=os.path.join(OUT, "quarry_tag.png"))
 
         # ---- tricks via hook (quarry pinned close so the shots read) ----
-        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(0, 9, 12), 8)")
+        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(0, 9, 30), 8)")
         pg.evaluate("NR.quarry.trick('roll', true)")
         pg.evaluate(WAIT_JS, 500)
         check("trick: roll runs", pg.evaluate("NR.quarry.state().trickType === 1 && Math.abs(NR.quarry.state().rollAng) > 1"), pg.evaluate("NR.quarry.state().rollAng"))
@@ -154,25 +154,31 @@ try:
         for attempt in range(3):  # the quarry only boosts when its look-ahead is clear, so allow a retry
             pg.evaluate(WAIT_JS, 6000)  # let the player's fuel refill and the quarry settle
             pg.evaluate("NR.player.boostFuel = 1")
+            for _ in range(30):  # start from the rest band (60 to 90 m), not from a slip at 120 m
+                if pg.evaluate("NR.quarry.gap") <= 90:
+                    break
+                pg.evaluate(WAIT_JS, 500)
             g0 = pg.evaluate("NR.quarry.gap")
             pg.evaluate(LOG_JS)
             pg.keyboard.down("Space")
-            pg.evaluate(WAIT_JS, 900)
-            if attempt == 0:
-                pg.screenshot(path=os.path.join(OUT, "quarry_boost.png"))
-            pg.evaluate(WAIT_JS, 4100)
+            shot = False
+            for _ in range(40):
+                pg.evaluate(WAIT_JS, 100)
+                if not shot and attempt == 0 and pg.evaluate("NR.quarry.gap") <= 32:
+                    pg.screenshot(path=os.path.join(OUT, "quarry_closing.png")); shot = True
+            pg.evaluate(WAIT_JS, 1000)
             pg.keyboard.up("Space")
             g = pg.evaluate("window.__g")
             gs = [r[0] for r in g]
             print("boost 5 s attempt %d: start gap %.1f min %.1f" % (attempt + 1, g0, min(gs)))
-            if any(r[1] > 0 for r in g) and min(gs) < g0 - 3:
+            if any(r[1] > 0 for r in g) and min(gs) < 35:
                 break
-        check("boost: gap shrinks", min(gs) < g0 - 3, "start %.1f min %.1f" % (g0, min(gs)))
-        check("boost: gap never under 4 m", min(gs) >= 3.99, "min %.2f" % min(gs))
+        check("boost: gap closes below 35 m", min(gs) < 35, "start %.1f min %.1f" % (g0, min(gs)))
+        check("boost: gap never under 20 m", min(gs) >= 19.99, "min %.2f" % min(gs))
         check("boost: quarry boosted after the player", any(r[1] > 0 for r in g))
 
         # ---- off-screen marker ----
-        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(14, 24, 7), 8)")
+        pg.evaluate("window.__pose = setInterval(() => NR.quarry.setPose(14, 24, 40), 8)")
         pg.evaluate(WAIT_JS, 600)
         mk = pg.evaluate("({chev: document.querySelector('#nrq').children[1].style.display, tag: document.querySelector('#nrq').children[0].style.display})")
         check("marker: chevron shown when off screen", mk["chev"] == "block", mk)
@@ -196,7 +202,7 @@ try:
         best = None
         for _ in range(34):
             pr = hp.evaluate(PROBE)
-            if pr["d"] == 0 and 10 <= pr["gap"] <= 17 and abs(pr["x"]) < 0.55 and 0.0 < pr["y"] < 0.4 and not pr["hid"] and pr["st"]["trickType"] == 0 and pr["st"]["boostT"] == 0:
+            if pr["d"] == 0 and 55 <= pr["gap"] <= 95 and abs(pr["x"]) < 0.5 and 0.0 < pr["y"] < 0.5 and not pr["hid"] and pr["st"]["trickType"] == 0 and pr["st"]["boostT"] == 0:
                 best = pr
                 break
             hp.evaluate(WAIT_JS, 400)

@@ -11,16 +11,21 @@ NR.cfg = {
     night: { name: 'NIGHT DRIVE', ramp: 0, best: 'neonRain.best.night', runs: 'neonRain.runs.night' },
     pursuit: { name: 'PURSUIT', ramp: 1.45, best: 'neonRain.best', runs: 'neonRain.runs' },
   },
-  // the quarry (HUD word SUSPECT): the getaway car chased in PURSUIT. Gaps are bumper to bumper, metres.
+  // the quarry (HUD name RUNAWAY REPLICANT, John 11/2/2026): the getaway car chased in PURSUIT. Gaps are bumper to bumper, metres.
   QUARRY: {
-    startGap: 12, minGap: 4, closeGap: 8, easeA: 10, easeB: 16, capGap: 32, carLen: 7.5, // rubber band: faster below easeA, level at easeB, hard cap capGap
-    topFaster: 0.06, easeOff: 0.15, surgeK: 7, surgeAdd: 40,        // top speed over the player's normal speed; push when under closeGap; push after hitting minGap
+    startGap: 70, restMid: 75, restHalf: 15,         // rest gap wanders inside restMid +- restHalf (60 to 90 m)
+    slipGap: 120, slipTime: 6,                       // pulls away toward slipGap when the player has no boost fuel, or for slipTime s after a hit
+    capGap: 130, minGap: 25, closeGap: 36,           // hard cap; hard floor (it surges clear); under closeGap it pushes and boosts away
+    easeRange: 12, topFaster: 0.06, slipFaster: 0.15, easeOff: 0.15, // gap error (m) for full band push; speed over the player's normal speed (rest, slipping); slowdown when too far
+    surgeK: 3, surgeAdd: 40,                         // push per metre under closeGap; push after hitting minGap
+    carLen: 7.5,
     wanderX: 11, wanderY: 7, yMid: 11, xLim: 16, yLo: -4, yHi: 24, steerX: 34, steerY: 22, // weave range and steering limits
     lookT: 2.0, carMargin: 1.0,                      // look-ahead (s) and clearance margin around traffic cars (m)
     trickMin: 8, trickMax: 20, rollDur: 0.3, rollShift: 3.5, jukeDur: 0.5, jukeAmp: 4,
-    boostMin: 10, boostMax: 25, boostLenMin: 1.5, boostLenMax: 2.5, boostAdd: 20, reactDelay: 0.25,
-    trailLen: 12, trailLenBoost: 6,                                     // light trail length behind the tail lamps (m)
-    tailGap: 10, tailEvery: 2, tailPoints: 100,      // TAILING bonus
+    boostMin: 10, boostMax: 25, boostLenMin: 1.5, boostLenMax: 2.5, boostAdd: 35, reactDelay: 0.4,
+    trailMin: 6, trailMax: 25, trailBoostK: 0.6,     // light trail length (m): short when close, long at range, shorter on boost
+    glowPx: 3.5,                                     // taillight glow never smaller than this on screen (px at 360x640)
+    tailGap: 40, tailEvery: 2, tailPoints: 100,      // TAILING bonus: within tailGap metres
   },
   HULL: 3, INVULN: 1.5,
   NEAR_MISS_DIST: 3.2, NEAR_MISS_POINTS: 250, CHAIN_WINDOW: 2.5,
