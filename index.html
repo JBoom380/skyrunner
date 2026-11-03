@@ -81211,6 +81211,49 @@ window.buildCruiser = function (THREE) {
   }
   function run(srcs, t, end) { for (const s of srcs) { s.start(t); s.stop(t + end); } return srcs[0]; }
 
+  // boost design: 0 = original sound, 1 = Afterburner, 2 = Heavy (default, John 11/2: v2 louder), 3 = Roar. Set by ?boostsfx=0|1|2|3
+  const BOOST_DEFAULT = 2;
+  const BOOST_V = (() => {
+    try { const q = new URLSearchParams(location.search).get('boostsfx'); if (q !== null && /^[0-3]$/.test(q)) return +q; } catch (e) {}
+    return BOOST_DEFAULT;
+  })();
+  // afterburner layers per design: rumble (lowpassed noise), sub sine, roar (lowpassed noise that opens),
+  // crackle (bandpassed impulse loop), flutter (gain LFO), ignition thump and rise time
+  const AB = {
+    1: { rumbleF: 38, rumbleLP: 140, rumbleG: 0.25, sub: 44, subG: 0.22, roarTo: 900, roarQ: 0.7, roarG: 0.45, peak: 0, crackC: 1800, crackQ: 0.9, crackRate: 40, dec: [3, 8], crackG: 0.5, flutter: 9, depth: 0.1, rise: 0.3, thump: 0.7, lvl: 0.3 },
+    2: { rumbleF: 32, rumbleLP: 85, rumbleG: 0.35, sub: 38, subG: 0.35, roarTo: 700, roarQ: 0.7, roarG: 0.4, peak: 0, crackC: 1700, crackQ: 0.9, crackRate: 60, dec: [3, 8], crackG: 0.55, flutter: 8, depth: 0.12, rise: 0.3, thump: 1.2, lvl: 0.55 },
+    3: { rumbleF: 42, rumbleLP: 150, rumbleG: 0.36, sub: 46, subG: 0.2, roarTo: 1400, roarQ: 0.8, roarG: 0.45, peak: 5, crackC: 2200, crackQ: 1.4, crackRate: 45, dec: [3, 5], crackG: 0.6, flutter: 12, depth: 0.08, rise: 0.4, thump: 0.75, lvl: 0.3 },
+  };
+  // 2 s loop of sparse impulses: each an exponential decay (dec[0]..dec[1] ms) with random sign and amplitude
+  function makeCrackle(ctx, rate, dec) {
+    const sr = ctx.sampleRate, n = Math.floor(sr * 2), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0);
+    let s = 987654;
+    const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    for (let i = 0; i < Math.round(rate * 2); i++) {
+      const at = Math.floor(rnd() * n), amp = (rnd() * 2 - 1) * (0.35 + 0.65 * rnd()), tau = (dec[0] + rnd() * (dec[1] - dec[0])) * 0.001 * sr, len = Math.floor(tau * 7);
+      for (let j = 0; j < len; j++) d[(at + j) % n] += amp * Math.exp(-j / tau);
+    }
+    return b;
+  }
+  // afterburner ignition: thump (sine drop 90 -> 35 Hz plus a short lowpassed noise burst), then a pitch and filter rise over d.rise
+  function boostAfter(ctx, out, nb, d) {
+    const t = ctx.currentTime + 0.005, R = d.rise, srcs = [];
+    const th = osc(ctx, 'sine', 90), tg = gain(ctx, 0); th.frequency.setValueAtTime(90, t); th.frequency.exponentialRampToValueAtTime(35, t + 0.25);
+    env(tg.gain, t, 0.004, 0.7 * d.thump, 0.35); th.connect(tg); tg.connect(out); srcs.push(th);
+    const bn = noiseSrc(ctx, nb), bl = filt(ctx, 'lowpass', 380, 0.7), bg = gain(ctx, 0);
+    env(bg.gain, t, 0.003, 0.5 * d.thump, 0.09); bn.connect(bl); bl.connect(bg); bg.connect(out); srcs.push(bn);
+    const rs = osc(ctx, 'sawtooth', 60), rl = filt(ctx, 'lowpass', 250, 0.9), rg = gain(ctx, 0);
+    rs.frequency.setValueAtTime(60, t); rs.frequency.exponentialRampToValueAtTime(110, t + R);
+    rl.frequency.setValueAtTime(250, t); rl.frequency.exponentialRampToValueAtTime(1000, t + R);
+    rg.gain.setValueAtTime(0.0001, t); rg.gain.linearRampToValueAtTime(0.22, t + R); rg.gain.exponentialRampToValueAtTime(0.0001, t + R + 0.5);
+    rs.connect(rl); rl.connect(rg); rg.connect(out); srcs.push(rs);
+    const ns = noiseSrc(ctx, nb), nl = filt(ctx, 'lowpass', 300, 0.7), ng = gain(ctx, 0);
+    nl.frequency.setValueAtTime(200, t); nl.frequency.exponentialRampToValueAtTime(1200, t + R);
+    ng.gain.setValueAtTime(0.0001, t); ng.gain.linearRampToValueAtTime(0.3, t + R); ng.gain.exponentialRampToValueAtTime(0.0001, t + R + 0.4);
+    ns.connect(nl); nl.connect(ng); ng.connect(out); srcs.push(ns);
+    return run(srcs, t, R + 0.6);
+  }
+
   const VOICES = {
     // near miss: doppler whoosh (bright noise sweeping down + falling tone), panned to the side of the passed car
     nearMiss(ctx, out, nb, o) {
@@ -81260,7 +81303,9 @@ window.buildCruiser = function (THREE) {
     },
     // boost ignition: igniter click, turbine whine spooling 600 -> 2400 Hz, bright air rip, short tight punch
     // (the sustained jet roar is a continuous voice)
-    boost(ctx, out, nb) {
+    boost(ctx, out, nb, o) {
+      const v = o && o.v != null ? o.v : BOOST_V;
+      if (v) return boostAfter(ctx, out, nb, AB[v]);
       const t = ctx.currentTime + 0.005;
       const cn = noiseSrc(ctx, nb), chp = filt(ctx, 'highpass', 2500, 0.7), cg = gain(ctx, 0);
       env(cg.gain, t, 0.002, 0.5, 0.03); cn.connect(chp); chp.connect(cg); cg.connect(out);
@@ -81473,7 +81518,33 @@ window.buildCruiser = function (THREE) {
   }
 
   // continuous voices: engine hum, turbine whine, wind rush, boost roar, drone hum (searchlight)
-  function makeLoops(ctx, out, nb) {
+  // afterburner loop nodes (variant 1-3); all layers feed the L.boost gain
+  function makeAfterburner(ctx, L, nb) {
+    const d = AB[L.mode];
+    L.abRumble = filt(ctx, 'lowpass', d.rumbleLP, 0.7); L.abRumbleG = gain(ctx, d.rumbleG); L.abRumble.connect(L.abRumbleG); L.abRumbleG.connect(L.boost);
+    L.abRumbleO1 = osc(ctx, 'sawtooth', d.rumbleF); L.abRumbleO2 = osc(ctx, 'sawtooth', d.rumbleF * 1.012);
+    L.abRumbleO1.connect(L.abRumble); L.abRumbleO2.connect(L.abRumble);
+    L.abSubG = gain(ctx, d.subG); L.abSubG.connect(L.boost); L.abSub = osc(ctx, 'sine', d.sub); L.abSub.connect(L.abSubG);
+    L.abRoarG = gain(ctx, d.roarG); L.abRoarG.connect(L.boost);
+    L.abRoarLP = filt(ctx, 'lowpass', 300, d.roarQ);
+    if (d.peak) { const pk = filt(ctx, 'peaking', 250, 1.2); pk.gain.value = d.peak; L.abRoarLP.connect(pk); pk.connect(L.abRoarG); }
+    else L.abRoarLP.connect(L.abRoarG);
+    L.abRoarN = noiseSrc(ctx, nb, true); L.abRoarN.connect(L.abRoarLP);
+    L.abCrackG = gain(ctx, d.crackG); L.abCrackG.connect(L.boost);
+    L.abCrackBP = filt(ctx, 'bandpass', d.crackC, d.crackQ); L.abCrackBP.connect(L.abCrackG);
+    L.abCrackN = ctx.createBufferSource(); L.abCrackN.loop = true; L.abCrackN.buffer = makeCrackle(ctx, d.crackRate, d.dec); L.abCrackN.connect(L.abCrackBP);
+    L.abFlut = osc(ctx, 'sine', d.flutter); L.abFlutG = gain(ctx, d.depth); L.abFlut.connect(L.abFlutG);
+    L.abFlutG.connect(L.abRoarG.gain); L.abFlutG.connect(L.abCrackG.gain);
+    L.boostSrc = [L.abRumbleO1, L.abRumbleO2, L.abSub, L.abRoarN, L.abCrackN, L.abFlut];
+  }
+  // afterburner targets at time t: on = boost held (roar opens over d.rise), off = release (roar closes)
+  function boostAt(L, t, on, k, fast) {
+    const d = AB[L.mode];
+    L.boost.gain.setTargetAtTime(on ? (d.lvl || 0.3) : 0, t, fast ? 0.06 : 0.25);
+    L.abRoarLP.frequency.setTargetAtTime(on ? d.roarTo * (1 + 0.25 * k) : 300, t, on ? d.rise / 3 : 0.2);
+  }
+
+  function makeLoops(ctx, out, nb, v) {
     const L = {};
     L.eng = gain(ctx, 0); L.eng.connect(out);
     L.engLP = filt(ctx, 'lowpass', 500, 2.2); L.engLP.connect(L.eng);
@@ -81483,18 +81554,21 @@ window.buildCruiser = function (THREE) {
     L.wind = gain(ctx, 0); L.wind.connect(out); L.windBP = filt(ctx, 'bandpass', 700, 0.6); L.windBP.connect(L.wind);
     L.wn = noiseSrc(ctx, nb, true); L.wn.connect(L.windBP);
     // boost: jet roar (high-passed noise, no low saw), turbine tone with vibrato, a quiet sine rumble underneath
-    L.boost = gain(ctx, 0); L.boost.connect(out);
-    L.boostHP = filt(ctx, 'highpass', 800, 0.7); L.boostLP = filt(ctx, 'lowpass', 6500, 0.5); L.boostHP.connect(L.boostLP); L.boostLP.connect(L.boost);
-    L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 1.3; L.bnG = gain(ctx, 0.5); L.bn.connect(L.bnG); L.bnG.connect(L.boostHP);
-    L.btG = gain(ctx, 0.1); L.btG.connect(L.boost); L.bt = osc(ctx, 'triangle', 1800); L.bt.connect(L.btG);
-    L.bv = osc(ctx, 'sine', 6.5); L.bvg = gain(ctx, 22); L.bv.connect(L.bvg); L.bvg.connect(L.bt.frequency);
-    L.bsub = gain(ctx, 0.12); L.bsub.connect(L.boost); L.bo = osc(ctx, 'sine', 46); L.bo.connect(L.bsub);
+    L.boost = gain(ctx, 0); L.boost.connect(out); L.mode = v === undefined ? BOOST_V : v;
+    if (L.mode === 0) {
+      L.boostHP = filt(ctx, 'highpass', 800, 0.7); L.boostLP = filt(ctx, 'lowpass', 6500, 0.5); L.boostHP.connect(L.boostLP); L.boostLP.connect(L.boost);
+      L.bn = noiseSrc(ctx, nb, true); L.bn.playbackRate.value = 1.3; L.bnG = gain(ctx, 0.5); L.bn.connect(L.bnG); L.bnG.connect(L.boostHP);
+      L.btG = gain(ctx, 0.1); L.btG.connect(L.boost); L.bt = osc(ctx, 'triangle', 1800); L.bt.connect(L.btG);
+      L.bv = osc(ctx, 'sine', 6.5); L.bvg = gain(ctx, 22); L.bv.connect(L.bvg); L.bvg.connect(L.bt.frequency);
+      L.bsub = gain(ctx, 0.12); L.bsub.connect(L.boost); L.bo = osc(ctx, 'sine', 46); L.bo.connect(L.bsub);
+      L.boostSrc = [L.bn, L.bo, L.bt, L.bv];
+    } else makeAfterburner(ctx, L, nb);
     // drone hum: detuned buzz with a fast rotor tremolo; gain follows how recently a drone spotted the car
     L.drone = gain(ctx, 0); L.drone.connect(out); L.droneAM = gain(ctx, 0.7); L.droneAM.connect(L.drone);
     L.droneLP = filt(ctx, 'lowpass', 700, 3); L.droneLP.connect(L.droneAM);
     L.d1 = osc(ctx, 'sawtooth', 118); L.d2 = osc(ctx, 'sawtooth', 120.5); L.d1.connect(L.droneLP); L.d2.connect(L.droneLP);
     L.dl = osc(ctx, 'sine', 23); L.dlg = gain(ctx, 0.3); L.dl.connect(L.dlg); L.dlg.connect(L.droneAM.gain);
-    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.bn, L.bo, L.bt, L.bv, L.d1, L.d2, L.dl]) s.start();
+    for (const s of [L.o1, L.o2, L.o3, L.whine, L.wn, L.d1, L.d2, L.dl, ...L.boostSrc]) s.start();
     return L;
   }
 
@@ -81682,11 +81756,13 @@ window.buildCruiser = function (THREE) {
     loops.windBP.frequency.setTargetAtTime(500 + k * 1600 + (b ? 900 : 0), t, 0.2);
     loops.wind.gain.setTargetAtTime((live ? 0.07 + k * 0.12 + (b ? 0.08 : 0) : idle ? 0.03 : 0), t, 0.2);
     const bl = b && live;
-    loops.boostHP.frequency.setTargetAtTime(bl ? 900 + k * 500 : 500, t, 0.15);
-    // turbine spools up on boost and winds down after it (gain tail below lets the fall be heard)
-    loops.bt.frequency.setTargetAtTime(bl ? 1700 + k * 900 : 520, t, bl ? 0.12 : 0.22);
-    loops.bo.frequency.setTargetAtTime(42 + k * 10, t, 0.2);
-    loops.boost.gain.setTargetAtTime(bl ? 0.3 : 0, t, b ? 0.06 : 0.25);
+    if (loops.mode === 0) {
+      loops.boostHP.frequency.setTargetAtTime(bl ? 900 + k * 500 : 500, t, 0.15);
+      // turbine spools up on boost and winds down after it (gain tail below lets the fall be heard)
+      loops.bt.frequency.setTargetAtTime(bl ? 1700 + k * 900 : 520, t, bl ? 0.12 : 0.22);
+      loops.bo.frequency.setTargetAtTime(42 + k * 10, t, 0.2);
+      loops.boost.gain.setTargetAtTime(bl ? 0.3 : 0, t, b ? 0.06 : 0.25);
+    } else boostAt(loops, t, bl, k, b);
     const sp2 = live || idle ? spotted : 0;
     loops.drone.gain.setTargetAtTime(0.11 * sp2, t, sp2 > 0.5 ? 0.05 : 0.2);
     loops.droneLP.frequency.setTargetAtTime(500 + 900 * sp2, t, 0.1);
@@ -81701,15 +81777,18 @@ window.buildCruiser = function (THREE) {
     return oc.startRendering().then(r => r.getChannelData(0));
   };
   // test hook: offline boost preview (engine + wind bed, boost held from 0.4 s to 2.4 s, ignition voice at 0.4 s)
-  A._renderBoost = function (seconds = 3.5) {
+  A._renderBoost = function (seconds = 3.5, variant = BOOST_V) {
     const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OC) return Promise.resolve(null);
+    const v = Number(variant) | 0;
     const oc = new OC(1, Math.ceil(44100 * seconds), 44100), nb = makeNoise(oc, 2), g = oc.createGain(); g.gain.value = 0.8; g.connect(oc.destination);
-    const L = makeLoops(oc, g, nb), on = 0.4, off = 2.4;
+    const L = makeLoops(oc, g, nb, v), on = 0.4, off = 2.4;
     L.eng.gain.value = 0.065; L.wind.gain.value = 0.1; L.whineG.gain.value = 0.006;
-    L.boost.gain.setValueAtTime(0, 0); L.boost.gain.setTargetAtTime(0.3, on, 0.06); L.boost.gain.setTargetAtTime(0, off, 0.25);
-    L.boostHP.frequency.setValueAtTime(500, 0); L.boostHP.frequency.setTargetAtTime(1100, on, 0.15); L.boostHP.frequency.setTargetAtTime(500, off, 0.15);
-    L.bt.frequency.setValueAtTime(520, 0); L.bt.frequency.setTargetAtTime(2000, on, 0.12); L.bt.frequency.setTargetAtTime(520, off, 0.22);
-    oc.suspend(on).then(() => { VOICES.boost(oc, g, nb); oc.resume(); });
+    if (v === 0) {
+      L.boost.gain.setValueAtTime(0, 0); L.boost.gain.setTargetAtTime(0.3, on, 0.06); L.boost.gain.setTargetAtTime(0, off, 0.25);
+      L.boostHP.frequency.setValueAtTime(500, 0); L.boostHP.frequency.setTargetAtTime(1100, on, 0.15); L.boostHP.frequency.setTargetAtTime(500, off, 0.15);
+      L.bt.frequency.setValueAtTime(520, 0); L.bt.frequency.setTargetAtTime(2000, on, 0.12); L.bt.frequency.setTargetAtTime(520, off, 0.22);
+    } else { boostAt(L, on, true, 0, true); boostAt(L, off, false, 0, false); }
+    oc.suspend(on).then(() => { VOICES.boost(oc, g, nb, { v }); oc.resume(); });
     return oc.startRendering().then(r => r.getChannelData(0));
   };
   A._status = function () {
