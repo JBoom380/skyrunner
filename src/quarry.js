@@ -23,7 +23,9 @@
   let pend = 0, pendT = 0, slipT = 0;
   let phA = 0, phB = 0, phC = 0, phD = 0, phE = 0;
   let trailClock = 0, nSamp = 0;
-  let xm = 0.7;                              // lateral planning margin (grows during tricks)
+  const MW = Q.clearWorld + Q.clearSlack, MC = Q.clearCar + Q.clearSlack, ENV = Math.hypot(HW, HH); // planning margins; roll envelope radius
+  let xm = MW, ym = MW;                      // lateral and vertical planning margins (grow during tricks)
+  let brakeT = 0;                            // hold back (shrink the lead) when no spot meets the margin
   let ok = false;
   const sx = new Float32Array(2 * TRAIL_N), sy = new Float32Array(2 * TRAIL_N), sz = new Float32Array(2 * TRAIL_N);
   const bx = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
@@ -46,7 +48,7 @@
       boostT = 0; boostVis = 0; boostCool = 2; boostNext = rr(Q.boostMin, Q.boostMax); boostReact = -1; boostWant = 0;
       trickType = 0; trickT = 0; rollAng = 0; offX = 0; trickHold = false; trickNext = rr(Q.trickMin, Q.trickMax); pend = 0;
       phA = Math.random() * 6.28; phB = Math.random() * 6.28; phC = Math.random() * 6.28; phD = Math.random() * 6.28; phE = Math.random() * 6.28;
-      trailClock = 0; nSamp = 0; Qo.hits = 0; vxs = vys = 0; hidT = 0; slipT = 0;
+      trailClock = 0; nSamp = 0; Qo.hits = 0; vxs = vys = 0; hidT = 0; slipT = 0; brakeT = 0; xm = ym = MW;
       if (NR.player && NR.player.pos) x = tx = NR.player.pos.x;
       place(); resetTrail(); show(Qo.active && false);
     },
@@ -59,7 +61,7 @@
       show(true); updateHud();
     },
     // collision box in the player's frame
-    box() { const zc = zCenter(); const px = px_(); qb.min.x = px - HW; qb.max.x = px + HW; qb.min.y = y - HH; qb.max.y = y + HH; qb.min.z = zc - HALF; qb.max.z = zc + HALF; return qb; },
+    box() { const zc = zCenter(), px = px_(), ex = trickType === 1 ? ENV : HW, ey = trickType === 1 ? ENV : HH; qb.min.x = px - ex; qb.max.x = px + ex; qb.min.y = y - ey; qb.max.y = y + ey; qb.min.z = zc - HALF; qb.max.z = zc + HALF; return qb; },
     // debug hooks: type 'roll' | 'juke'; hold = freeze the roll at mid-turn until trick(null)
     trick(type, hold) { if (!type) { trickHold = false; return; } trickHold = !!hold; startTrick(type === 'juke' ? 2 : 1, Math.random() < 0.5 ? -1 : 1); },
     boost() { startBoost(); },
@@ -116,12 +118,12 @@
     const zq = zCenter();
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i]; if (!car.def) continue;
-      const h = car.def.half, cy = car.y + car.def.cy, m = Q.carMargin;
+      const h = car.def.half, cy = car.y + car.def.cy, m = MC - MW;
       const ca = Math.min(car.x, car.tx === undefined ? car.x : car.tx, car.lcTo === undefined || !car.lc ? car.x : car.lcTo) - h[0] - m;
       const cb = Math.max(car.x, car.tx === undefined ? car.x : car.tx, car.lcTo === undefined || !car.lc ? car.x : car.lcTo) + h[0] + m;
       if (cb < xa || ca > xb) continue;
       if (cy + h[1] + m < ya || cy - h[1] - m > yb) continue;
-      const R = h[2] + HALF + Q.carMargin * 2, d0 = car.z - zq, rel = (car.dir > 0 ? -car.speed : car.speed) + vq;
+      const R = h[2] + HALF + MC, d0 = car.z - zq, rel = (car.dir > 0 ? -car.speed : car.speed) + vq;
       if (Math.abs(d0) < R) return true;
       if (d0 * rel < 0 && (Math.abs(d0) - R) / Math.abs(rel) <= T) return true;
     }
@@ -133,11 +135,11 @@
     const m = xm + (extra || 0), zq = zCenter();
     const dx = Math.abs(cx - x), dy = Math.abs(cy - y);
     const tt = Math.max(dx / 26, dy / 18) + 0.15;
-    const xa = (colOnly ? cx : Math.min(x, cx)) - HW - m, xb = (colOnly ? cx : Math.max(x, cx)) + HW + m, ya = (colOnly ? cy : Math.min(y, cy)) - HH - 0.6, yb = (colOnly ? cy : Math.max(y, cy)) + HH + 0.6;
-    const L1 = Math.max(vq * tt, 30), ca = cx - HW - m, cb = cx + HW + m, cya = cy - HH - 0.6, cyb = cy + HH + 0.6;
+    const xa = (colOnly ? cx : Math.min(x, cx)) - HW - m, xb = (colOnly ? cx : Math.max(x, cx)) + HW + m, ya = (colOnly ? cy : Math.min(y, cy)) - HH - ym, yb = (colOnly ? cy : Math.max(y, cy)) + HH + ym;
+    const L1 = Math.max(vq * tt, 30), ca = cx - HW - m, cb = cx + HW + m, cya = cy - HH - ym, cyb = cy + HH + ym;
     // near: the transit region (span box) must be clear, and the destination column for the first 0.6 s
-    if (worldHit(xa, xb, ya, yb, zq - L1, zq + HALF + 1) || trafficHit(xa, xb, ya, yb, tt, vq)) return -1;
-    if (worldHit(ca, cb, cya, cyb, zq - vq * 0.9, zq + HALF + 1) || trafficHit(ca, cb, cya, cyb, 0.9, vq)) return -1;
+    if (worldHit(xa, xb, ya, yb, zq - L1, zq + HALF + MW) || trafficHit(xa, xb, ya, yb, tt, vq)) return -1;
+    if (worldHit(ca, cb, cya, cyb, zq - vq * 0.9, zq + HALF + MW) || trafficHit(ca, cb, cya, cyb, 0.9, vq)) return -1;
     let n = 0;
     if (!worldHit(ca, cb, cya, cyb, zq - vq * 1.2, zq + HALF) && !trafficHit(ca, cb, cya, cyb, 1.2, vq)) {
       n = 1;
@@ -159,7 +161,7 @@
     // search the corridor grid: coarse sweep first, then a fine grid, then (nothing clear from here) the clearest column
     if (search(4, 4, false, WP[0], WP[1], vq) || search(2, 2, false, WP[0], WP[1], vq)) return;
     if (evW >= 0) { tx = WP[0]; ty = WP[1]; return; }
-    search(2, 2, true, x, y, vq);
+    if (!search(2, 2, true, x, y, vq)) { brakeT = 0.4; Qo.brakes = (Qo.brakes || 0) + 1; }
   }
   function search(dx, dy, column, ox, oy, vq) {
     colOnly = column; let bestC = 1e9, bx_ = 0, by_ = 0, bestEv = -1;
@@ -176,14 +178,14 @@
   }
 
   // ---------------- tricks and boost ----------------
-  function startTrick(type, dir) { trickType = type; trickT = 0; trickDir = dir; trickDur = type === 1 ? Q.rollDur : Q.jukeDur; trickAmp = type === 1 ? Q.rollShift : Q.jukeAmp; xm = 0.7 + trickAmp + 0.3; if (type === 1 && NR.audio && NR.audio.quarryRoll && Qo.pos) NR.audio.quarryRoll(panOf(), gap); }
+  function startTrick(type, dir) { trickType = type; trickT = 0; trickDir = dir; trickDur = type === 1 ? Q.rollDur : Q.jukeDur; trickAmp = type === 1 ? Q.rollShift : Q.jukeAmp; xm = MW + trickAmp + 0.3; ym = MW + (type === 1 ? ENV - HH : 0); if (type === 1 && NR.audio && NR.audio.quarryRoll && Qo.pos) NR.audio.quarryRoll(panOf(), gap); }
   function stepTrick(dt) {
     if (trickType === 0) return;
     if (!(trickHold && trickType === 1 && trickT >= trickDur * 0.5)) trickT = Math.min(trickDur, trickT + dt);
     const k = trickT / trickDur;
     if (trickType === 1) { rollAng = -trickDir * Math.PI * 2 * ease(k); offX = trickDir * trickAmp * Math.sin(Math.PI * ease(k)); }
     else { offX = trickDir * trickAmp * Math.sin(Math.PI * Math.sqrt(k)) ; rollAng = -trickDir * 0.35 * Math.sin(Math.PI * k); }
-    if (trickT >= trickDur && !trickHold) { trickType = 0; rollAng = 0; offX = 0; xm = 0.7; }
+    if (trickT >= trickDur && !trickHold) { trickType = 0; rollAng = 0; offX = 0; xm = MW; ym = MW; }
   }
   function startBoost() {
     if (boostT > 0) return; boostLen = rr(Q.boostLenMin, Q.boostLenMax); boostT = boostLen; boostNext = rr(Q.boostMin, Q.boostMax);
@@ -192,7 +194,7 @@
   function canStart(vq, extra, lookT) {
     buildHz(vq); // whole look-ahead clear
     const m = xm + extra, zq = zCenter();
-    const ca = x + offX - HW - m, cb = x + offX + HW + m, cya = y - HH - 0.6, cyb = y + HH + 0.6;
+    const ca = x + offX - HW - m, cb = x + offX + HW + m, cya = y - HH - ym, cyb = y + HH + ym;
     if (Math.abs(tx - x) > 3 || Math.abs(ty - y) > 3) return false;
     if (worldHit(ca, cb, cya, cyb, zq - vq * lookT, zq + HALF)) return false;
     return !trafficHit(ca, cb, cya, cyb, lookT, vq);
@@ -208,6 +210,7 @@
     let vq = vN * (1 + (s >= 0 ? (goal === Q.slipGap ? Q.slipFaster : Q.topFaster) : Q.easeOff) * s);
     if (gap < Q.closeGap) vq += (Q.closeGap - gap) * Q.surgeK;
     if (surgeT > 0) { vq += Q.surgeAdd * Math.min(1, surgeT * 2); surgeT -= dt; }
+    if (brakeT > 0) { vq -= 0.2 * vN; brakeT -= dt; }   // no spot meets the clearance: hold back instead of squeezing through
     // own boost
     if (boostT > 0) {
       boostT -= dt; if (boostT <= 0) { boostT = 0; boostCool = 3; }
@@ -238,9 +241,9 @@
       trickNext -= dt;
       if (trickNext <= 0) {
         const dir = Math.random() < 0.5 ? -1 : 1, type = Math.random() < 0.5 ? 1 : 2, amp = type === 1 ? Q.rollShift : Q.jukeAmp;
-        const save = xm; xm = 0.7 + amp + 0.3;
-        const fine = Math.abs(x + dir * amp) < Q.xLim + 1 && canStart(vq, amp + 0.3, Math.max(trickDurOf(type) + 0.5, 1.2));
-        xm = save;
+        const save = xm, saveY = ym; xm = MW + amp + 0.3; ym = MW + (type === 1 ? ENV - HH : 0);
+        const fine = Math.abs(x + dir * amp) < Q.xLim + 1 && (type !== 1 || y > Q.yLo + ENV - HH + 0.3) && canStart(vq, amp + 0.3, Math.max(trickDurOf(type) + 0.5, 1.2));
+        xm = save; ym = saveY;
         if (fine) { startTrick(type, dir); trickNext = rr(Q.trickMin, Q.trickMax); }
         else trickNext = rr(1, 2);
       }
@@ -253,7 +256,7 @@
     const k = 1 - Math.exp(-dt * 24);
     vxs += (ux - vxs) * k; vys += (uy - vys) * k;
     x += vxs * dt; y += vys * dt;
-    x = clamp(x, -Q.xLim, Q.xLim); y = clamp(y, Q.yLo, Q.yHi);
+    x = clamp(x, -Q.xLim, Q.xLim); y = clamp(y, Q.yLo + (trickType === 1 ? ENV - HH : 0), Q.yHi); // a rolling car keeps its whole envelope inside the corridor
     safety();
     // tailing score
     if (gap < Q.tailGap) { tailT += dt; if (tailT >= Q.tailEvery) { tailT = 0; core.score += Q.tailPoints; NR.bus.emit('score', { points: Q.tailPoints, reason: 'TAILING', pos: Qo.pos }); } }
@@ -262,31 +265,39 @@
   let vxs = 0, vys = 0;
   // last line of defence: if the plan still left the car overlapping anything right now, slide to the nearest free spot
   const sb = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
-  function overlapsNow(px, py) {
-    const zc = zCenter(); sb.min.x = px - HW; sb.max.x = px + HW; sb.min.y = py - HH; sb.max.y = py + HH; sb.min.z = zc - HALF; sb.max.z = zc + HALF;
+  // mw / mc: clearance to demand from world geometry and from traffic cars (0 = plain overlap)
+  function overlapsNow(px, py, mw, mc) {
+    const zc = zCenter(), ex = (trickType === 1 ? ENV : HW) + mw, ey = (trickType === 1 ? ENV : HH) + mw;
+    sb.min.x = px - ex; sb.max.x = px + ex; sb.min.y = py - ey; sb.max.y = py + ey; sb.min.z = zc - HALF - mw; sb.max.z = zc + HALF + mw;
     if (NR.world && NR.world.collide && NR.world.collide(sb).hit) return true;
     const cars = NR.traffic && NR.traffic.cars; if (!cars) return false;
+    const x0 = px - (trickType === 1 ? ENV : HW) - mc, x1 = px + (trickType === 1 ? ENV : HW) + mc, y0 = py - (trickType === 1 ? ENV : HH) - mc, y1 = py + (trickType === 1 ? ENV : HH) + mc;
     for (let i = 0; i < cars.length; i++) {
-      const c = cars[i]; if (!c.def) continue; const h = c.def.half, cy = c.y + c.def.cy, m = 0.1;
-      if (sb.min.x < c.x + h[0] + m && sb.max.x > c.x - h[0] - m && sb.min.y < cy + h[1] + m && sb.max.y > cy - h[1] - m && sb.min.z < c.z + h[2] + m && sb.max.z > c.z - h[2] - m) return true;
+      const c = cars[i]; if (!c.def) continue; const h = c.def.half, cy = c.y + c.def.cy;
+      if (x0 < c.x + h[0] && x1 > c.x - h[0] && y0 < cy + h[1] && y1 > cy - h[1] && zc - HALF - mc < c.z + h[2] && zc + HALF + mc > c.z - h[2]) return true;
     }
     return false;
   }
   const DIRS = [1, 0, -1, 0, 0, 1, 0, -1, 0.7, 0.7, -0.7, 0.7, 0.7, -0.7, -0.7, -0.7];
-  function safety() {
-    if (!overlapsNow(px_(), y)) return;
+  function findSpot(mw, mc) { // nearest free spot with that clearance, local rings first, then the whole corridor
     for (let r = 1.0; r <= 14; r += 1.0) {
       for (let d = 0; d < DIRS.length; d += 2) {
         const nx = clamp(x + DIRS[d] * r, -Q.xLim, Q.xLim), ny = clamp(y + DIRS[d + 1] * r, Q.yLo, Q.yHi);
-        if (!overlapsNow(clamp(nx + offX, -17.9, 17.9), ny)) { x = tx = nx; y = ty = ny; vxs = vys = 0; Qo.hits++; return; }
+        if (!overlapsNow(clamp(nx + offX, -17.9, 17.9), ny, mw, mc)) { x = tx = nx; y = ty = ny; vxs = vys = 0; Qo.hits++; return true; }
       }
     }
-    // nothing free nearby (a closed gate far from here): take the nearest free spot anywhere in the corridor
     let bd = 1e9, bxx = x, byy = y;
     for (let cx = -Q.xLim; cx <= Q.xLim + 0.01; cx += 1) for (let cy = Q.yLo; cy <= Q.yHi + 0.01; cy += 1) {
-      const d = Math.hypot(cx - x, cy - y); if (d < bd && !overlapsNow(clamp(cx + offX, -17.9, 17.9), cy)) { bd = d; bxx = cx; byy = cy; }
+      const d = Math.hypot(cx - x, cy - y); if (d < bd && !overlapsNow(clamp(cx + offX, -17.9, 17.9), cy, mw, mc)) { bd = d; bxx = cx; byy = cy; }
     }
-    if (bd < 1e9) { x = tx = bxx; y = ty = byy; vxs = vys = 0; Qo.hits++; Qo.farSlides = (Qo.farSlides || 0) + 1; }
+    if (bd < 1e9) { x = tx = bxx; y = ty = byy; vxs = vys = 0; Qo.hits++; return true; }
+    return false;
+  }
+  function safety() {
+    if (!overlapsNow(px_(), y, Q.clearWorld, Q.clearCar)) return;
+    if (findSpot(Q.clearWorld, Q.clearCar)) return;
+    brakeT = 0.4; Qo.brakes = (Qo.brakes || 0) + 1; // no spot keeps the margin: hold back toward the player ...
+    if (overlapsNow(px_(), y, 0, 0)) findSpot(0, 0); // ... and never let the boxes actually touch
   }
   function trickDurOf(type) { return type === 1 ? Q.rollDur : Q.jukeDur; }
 

@@ -56,9 +56,9 @@ SOAK_JS = """(args) => {
       if (sep < 0) S.cars++;
       if (sep < S.minCar) S.minCar = sep;
     }
-    if (S.steps % 5 === 0) {
-      const ob = W.obstacles();
-      for (let k = 0; k < ob.length; k++) { const o = ob[k];
+    if (S.steps % 2 === 0) {
+      const ob = W.obstacles(), hz = W.hazardBoxes();
+      for (let k = 0; k < ob.length + hz.length; k++) { const o = k < ob.length ? ob[k] : hz[k - ob.length];
         const sep = Math.max(b.min.x - o.x1, o.x0 - b.max.x, b.min.y - o.y1, o.y0 - b.max.y, b.min.z - o.z1, o.z0 - b.max.z);
         if (sep < S.minObs) S.minObs = sep; }
     }
@@ -243,6 +243,8 @@ try:
             check("soak %s: no world collision" % name, res["world"] == 0, res["world"])
             check("soak %s: no traffic collision" % name, res["cars"] == 0, res["cars"])
             check("soak %s: inside corridor" % name, res["out"] == 0, res["out"])
+            check("soak %s: clearance to traffic >= 1.5 m" % name, res["minCar"] >= 1.5 - 1e-3, "%.2f" % res["minCar"])
+            check("soak %s: clearance to world geometry >= 1.0 m" % name, res["minObs"] >= 1.0 - 1e-3, "%.2f" % res["minObs"])
             print("   near clearance: traffic %.2f m, obstacles %.2f m; gap %.1f..%.1f; quarry boosts %d tricks %d; safety slides %d" % (res["minCar"], res["minObs"], res["gmin"], res["gmax"], res["boosts"], res["tricks"], res["saves"]))
         b.close()
 finally:

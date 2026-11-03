@@ -20,7 +20,8 @@ NR.cfg = {
     surgeK: 3, surgeAdd: 40,                         // push per metre under closeGap; push after hitting minGap
     carLen: 7.5,
     wanderX: 11, wanderY: 7, yMid: 11, xLim: 16, yLo: -4, yHi: 24, steerX: 34, steerY: 22, // weave range and steering limits
-    lookT: 2.0, carMargin: 1.0,                      // look-ahead (s) and clearance margin around traffic cars (m)
+    lookT: 2.0,                                      // look-ahead (s)
+    clearCar: 1.5, clearWorld: 1.0, clearSlack: 0.25, // hard clearance (m) from traffic and from world geometry, measured on the full envelope (roll and juke included); the planner adds the slack
     trickMin: 8, trickMax: 20, rollDur: 0.3, rollShift: 3.5, jukeDur: 0.5, jukeAmp: 4,
     boostMin: 10, boostMax: 25, boostLenMin: 1.5, boostLenMax: 2.5, boostAdd: 35, reactDelay: 0.4,
     trailMin: 6, trailMax: 25, trailBoostK: 0.6,     // light trail length (m): short when close, long at range, shorter on boost

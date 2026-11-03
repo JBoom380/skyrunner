@@ -1,0 +1,53 @@
+// SKYRUNNER shared config: tuning, districts, palette, rng, event bus. Owned by the core; builders read only.
+window.NR = window.NR || {};
+NR.cfg = {
+  RES: { high: [360, 640], low: [270, 480] },   // internal render size (portrait 9:16)
+  SPEED_START: 60, SPEED_MAX: 190, SPEED_RAMP: 1.45, // m/s, gain per second of play (PURSUIT; top speed at ~90 s)
+  BOOST_ADD: 60, BOOST_SECONDS: 2.2, BOOST_RECHARGE: 6,
+  LANE_X: 18, ALT_MIN: -6, ALT_MAX: 30,           // player box (world units = metres)
+  STEER_SPEED: 31, CLIMB_SPEED: 22, STEER_RESP: 14,
+  // run modes: NIGHT DRIVE holds SPEED_START, PURSUIT ramps to SPEED_MAX. Each mode keeps its own best and top runs.
+  MODES: {
+    night: { name: 'NIGHT DRIVE', ramp: 0, best: 'neonRain.best.night', runs: 'neonRain.runs.night' },
+    pursuit: { name: 'PURSUIT', ramp: 1.45, best: 'neonRain.best', runs: 'neonRain.runs' },
+  },
+  // the quarry (HUD name RUNAWAY REPLICANT, John 11/2/2026): the getaway car chased in PURSUIT. Gaps are bumper to bumper, metres.
+  QUARRY: {
+    startGap: 70, restMid: 75, restHalf: 15,         // rest gap wanders inside restMid +- restHalf (60 to 90 m)
+    slipGap: 120, slipTime: 6,                       // pulls away toward slipGap when the player has no boost fuel, or for slipTime s after a hit
+    capGap: 130, minGap: 25, closeGap: 36,           // hard cap; hard floor (it surges clear); under closeGap it pushes and boosts away
+    easeRange: 12, topFaster: 0.06, slipFaster: 0.15, easeOff: 0.15, // gap error (m) for full band push; speed over the player's normal speed (rest, slipping); slowdown when too far
+    surgeK: 3, surgeAdd: 40,                         // push per metre under closeGap; push after hitting minGap
+    carLen: 7.5,
+    wanderX: 11, wanderY: 7, yMid: 11, xLim: 16, yLo: -4, yHi: 24, steerX: 34, steerY: 22, // weave range and steering limits
+    lookT: 2.0, carMargin: 1.0,                      // look-ahead (s) and clearance margin around traffic cars (m)
+    trickMin: 8, trickMax: 20, rollDur: 0.3, rollShift: 3.5, jukeDur: 0.5, jukeAmp: 4,
+    boostMin: 10, boostMax: 25, boostLenMin: 1.5, boostLenMax: 2.5, boostAdd: 35, reactDelay: 0.4,
+    trailMin: 6, trailMax: 25, trailBoostK: 0.6,     // light trail length (m): short when close, long at range, shorter on boost
+    glowPx: 3.5,                                     // taillight glow never smaller than this on screen (px at 360x640)
+    tailGap: 40, tailEvery: 2, tailPoints: 100,      // TAILING bonus: within tailGap metres
+  },
+  HULL: 3, INVULN: 1.5,
+  NEAR_MISS_DIST: 3.2, NEAR_MISS_POINTS: 250, CHAIN_WINDOW: 2.5,
+  SIREN_PER_MISS: 0.12, SIREN_CLEAR: 320,
+  DISTRICT_LEN: 2800, BLEND_LEN: 320,
+  RECYCLE_Z: 40, SPAWN_Z: -1400,
+  BEST_KEY: 'neonRain.best', SETTINGS_KEY: 'neonRain.settings',
+};
+// Film palette (smog, sodium amber, cold teal, dull red). Hex for builders; the post pass uses the same 18 colours.
+NR.PALETTE = [0x050609, 0x0e1216, 0x171f26, 0x243038, 0x36454c, 0x54666b, 0x1a120d, 0x331f12, 0x5c331a, 0x9e612b, 0xdb994d, 0xf5d69e, 0x4d1a17, 0x9e4236, 0x38737d, 0x7ab3b8, 0x946675, 0xebede6];
+NR.DISTRICTS = [
+  { id: 'canyon', name: 'NEON CANYON', fog: 0x1a1f24, sky: [0x07090c, 0x2b2620], ground: 0x07080a, density: 0.0021, accent: [0xc9584a, 0x4f9aa6, 0xd9953f, 0x9a6a7e], rain: 1.0 },
+  { id: 'stacks', name: 'FIRE STACKS', fog: 0x1c1410, sky: [0x040404, 0x3a2414], ground: 0x050506, density: 0.0013, accent: [0xe07a2a, 0xe0a050, 0xb8402c, 0x4f9aa6], rain: 0.5 },
+  { id: 'arcology', name: 'THE ARCOLOGY', fog: 0x1e2226, sky: [0x05060a, 0x2e2a24], ground: 0x06070a, density: 0.0009, accent: [0xe0b070, 0x5aa0aa, 0xb05a48, 0xd8d0c0], rain: 0.7 },
+  { id: 'dust', name: 'DUST SEA', fog: 0x9a5426, sky: [0x4a2410, 0xc07a3a], ground: 0x5a2c12, density: 0.0026, accent: [0xf0c890, 0xd08a4a, 0x5aa0aa, 0xe8e0d0], rain: 0.0 },
+  { id: 'seawall', name: 'THE SEA WALL', fog: 0x161c22, sky: [0x040608, 0x1c2228], ground: 0x050709, density: 0.0016, accent: [0x5aa0aa, 0xc9584a, 0xd8d8d0, 0xd9953f], rain: 1.4 },
+];
+NR.ASSET = document.querySelector('script[src="config.js"]') ? '../assets/' : 'assets/'; // dev.html lives in src/
+NR.MUSIC = [{ file: NR.ASSET + 'rainy_sax.mp3', title: 'RAINY SAX' }, { file: NR.ASSET + 'old_school_test_1.mp3', title: 'OLD SCHOOL TEST 1' }];
+NR.TITLE_ART = NR.ASSET + 'title.png'; NR.TITLE_EMBER = [0.79, 0.413]; // cigarette ember position in the title art (fraction of width/height) for the smoke overlay // painted title backdrop (detective in the alley); ui falls back to code-drawn art if missing
+NR.rng = (seed) => { let s = (seed >>> 0) || 1; return () => (s = (s * 16807) % 2147483647) / 2147483647; };
+NR.bus = (() => { const h = {}; return {
+  on(e, f) { (h[e] = h[e] || []).push(f); }, off(e, f) { h[e] = (h[e] || []).filter(x => x !== f); },
+  emit(e, d) { for (const f of (h[e] || []).slice()) { try { f(d); } catch (err) { console.error('[NR.bus ' + e + ']', err); } } },
+}; })();
