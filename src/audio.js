@@ -502,6 +502,16 @@
     if (s) s.onended = () => { A.voices--; }; else A.voices--;
   }
   A.play = play;
+  // quarry (chase car) voices: the same sounds as the player's, quieter, panned to the quarry, fading with distance
+  function quarryVoice(name, pan, dist, k, o) {
+    if (!ctx || ctx.state !== 'running' || sfxV <= 0 || A.voices > 24) return;
+    const v = VOICES[name]; if (!v) return;
+    const g = gain(ctx, k / (1 + (dist || 0) / 40)), p = panner(ctx, pan || 0); g.connect(p); p.connect(sfxBus);
+    A.voices++; const s = v(ctx, g, nb, o);
+    if (s) s.onended = () => { A.voices--; }; else A.voices--;
+  }
+  A.quarryBoost = (on, pan, dist) => { if (on) quarryVoice('boost', pan, dist, 0.4); };
+  A.quarryRoll = (pan, dist) => quarryVoice('roll', pan, dist, 0.35, { pan: 0 });
 
   // ---- roll + hazards ----
   let spotted = 0, lastRoll = -9, rollWas = false;

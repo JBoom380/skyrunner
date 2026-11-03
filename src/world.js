@@ -1294,6 +1294,7 @@ void main(){ vZ = position.z;
     },
     districtAt(s) { const idx = Math.floor(Math.max(0, s) / L); return idx % ND; },
     // hazards: live list, lethal boxes this frame, and a test helper that places one `ahead` metres in front of the car
+    hazardRaw() { return HZ; }, travelNow() { return travel; }, // read-only access for the quarry's look-ahead
     hazards() { return HZ.map(h => ({ kind: h.kind, z: travel - h.q, zEnd: travel - h.end, x: h.x, y: h.y, n: h.n, warned: h.warned, act: h.act })); },
     hazardBoxes() { const out = []; for (let i = 0; i < nHB; i++) { const o = i * 6; out.push({ kind: HBK[i], x0: HB[o], x1: HB[o + 1], y0: HB[o + 2], y1: HB[o + 3], z0: travel - HB[o + 5], z1: travel - HB[o + 4] }); } return out; },
     spawnHazard(kind, ahead, df) { if (!core || !obstaclesOn) return false; return makeHazard(kind, travel + (ahead || 300), df === undefined ? (core.difficulty || 0) : df); },

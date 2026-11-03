@@ -81,7 +81,7 @@
   let shakeA = 0, shakeT = 0, flashT = 0, flashMax = 1, flashA = 0; const flashC = new THREE.Color();
   setRes();
 
-  const MODS = ['audio', 'world', 'traffic', 'player', 'fx', 'controls', 'ui'];
+  const MODS = ['audio', 'world', 'traffic', 'quarry', 'player', 'fx', 'controls', 'ui'];
   const dead = {};
   function call(m, fn, ...a) {
     const mod = NR[m]; if (!mod || typeof mod[fn] !== 'function' || dead[m + fn]) return;
@@ -154,9 +154,7 @@
   // ---- loop ----
   for (const m of MODS) call(m, 'init', core);
   let last = performance.now();
-  function frame(now) {
-    requestAnimationFrame(frame);
-    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative (first-frame rAF timestamp)
+  function advance(dt) { // one simulation step (no render); core.step(dt) calls it for tests
     core.dt = dt; core.time += dt;
     const ctrl = NR.controls && NR.controls.state;
     core.input = ctrl || core.input;
@@ -167,6 +165,12 @@
     for (const m of MODS) if (m !== 'ui') call(m, 'update', playing ? dt : (core.state === 'PAUSE' ? 0 : dt), core);
     updateCamera(dt);
     call('ui', 'update', dt, core);
+  }
+  core.step = advance;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative (first-frame rAF timestamp)
+    advance(dt);
     if (flashT > 0) { flashT -= dt; post.uniforms.flash.value.set(flashC.r, flashC.g, flashC.b, flashA * Math.max(0, flashT / flashMax)); } else post.uniforms.flash.value.w = 0;
     renderer.setRenderTarget(rt); renderer.render(scene, camera);
     renderer.setRenderTarget(null); post.uniforms.t.value = rt.texture; renderer.render(pscene, pcam);

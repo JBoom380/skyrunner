@@ -11,6 +11,17 @@ NR.cfg = {
     night: { name: 'NIGHT DRIVE', ramp: 0, best: 'neonRain.best.night', runs: 'neonRain.runs.night' },
     pursuit: { name: 'PURSUIT', ramp: 1.45, best: 'neonRain.best', runs: 'neonRain.runs' },
   },
+  // the quarry (HUD word SUSPECT): the getaway car chased in PURSUIT. Gaps are bumper to bumper, metres.
+  QUARRY: {
+    startGap: 12, minGap: 4, closeGap: 8, easeA: 10, easeB: 16, capGap: 32, carLen: 7.5, // rubber band: faster below easeA, level at easeB, hard cap capGap
+    topFaster: 0.06, easeOff: 0.15, surgeK: 7, surgeAdd: 40,        // top speed over the player's normal speed; push when under closeGap; push after hitting minGap
+    wanderX: 11, wanderY: 7, yMid: 11, xLim: 16, yLo: -4, yHi: 24, steerX: 34, steerY: 22, // weave range and steering limits
+    lookT: 2.0, carMargin: 1.0,                      // look-ahead (s) and clearance margin around traffic cars (m)
+    trickMin: 8, trickMax: 20, rollDur: 0.3, rollShift: 3.5, jukeDur: 0.5, jukeAmp: 4,
+    boostMin: 10, boostMax: 25, boostLenMin: 1.5, boostLenMax: 2.5, boostAdd: 20, reactDelay: 0.25,
+    trailLen: 12, trailLenBoost: 6,                                     // light trail length behind the tail lamps (m)
+    tailGap: 10, tailEvery: 2, tailPoints: 100,      // TAILING bonus
+  },
   HULL: 3, INVULN: 1.5,
   NEAR_MISS_DIST: 3.2, NEAR_MISS_POINTS: 250, CHAIN_WINDOW: 2.5,
   SIREN_PER_MISS: 0.12, SIREN_CLEAR: 320,
